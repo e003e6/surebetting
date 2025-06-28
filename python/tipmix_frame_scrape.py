@@ -11,11 +11,12 @@ with sync_playwright() as p:
 
     # oldal megnyitása
     page.goto(
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/vilag/klubcsapat-vb-d-csoport/chelsea-los-angeles-fc/271848150573125632/all")
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/vilag/klubcsapat-vb-h-csoport/salzburg-real-madrid/273476278799175680/all")
 
     # várakozás az oldal betöltésére
     page.wait_for_selector(".MarketGroupsItem", timeout=5000)
-    page.screenshot(path=f"screenshot_{time.strftime("%Y-%m-%d_%H-%M-%S")}.png", full_page=True)
+    #page.screenshot(path=f"screenshot_{time.strftime("%Y-%m-%d_%H-%M-%S")}.png", full_page=True)
+    page.screenshot(path="screenshot.png", full_page=True)
 
 
     # MarketGroupsItem
@@ -39,3 +40,6 @@ with sync_playwright() as p:
 
 
     browser.close()  # böngésző bezárása
+
+
+    #A hibát az okozza, hogy néhány .Market__OddsGroupItem elemben nincs .OddsButton__Text nevű childja, vagy azért, mert az adott odds más struktúrában van megadva, vagy üres az adott listaelem. Ezért a query_selector() None-t ad vissza, és utána a inner_text() meghívása hibát dob, mivel NoneType-on hívod.
