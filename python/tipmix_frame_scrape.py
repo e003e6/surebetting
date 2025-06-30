@@ -1,45 +1,44 @@
 from playwright.sync_api import sync_playwright
-import time
-
 
 with sync_playwright() as p:
-    # böngésző indítása háttérben
     browser = p.chromium.launch(headless=True)
-
-    # új lap
     page = browser.new_page()
 
-    # oldal megnyitása
     page.goto(
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/vilag/klubcsapat-vb-h-csoport/salzburg-real-madrid/273476278799175680/all")
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/vilag/klubcsapat-vb/real-madrid-juventus/274158475157835776/all"
+    )
 
-    # várakozás az oldal betöltésére
     page.wait_for_selector(".MarketGroupsItem", timeout=5000)
-    #page.screenshot(path=f"screenshot_{time.strftime("%Y-%m-%d_%H-%M-%S")}.png", full_page=True)
-    page.screenshot(path="screenshot.png", full_page=True)
-
-
-    # MarketGroupsItem
     elem = page.query_selector(".MarketGroupsItem")
-    #print(elem)
 
     for child in elem.query_selector_all("article"):
-        print(child.query_selector('.Market__CollapseText').inner_text())
+        header = child.query_selector('.Market__CollapseText')
+        if header:
+            print(f"\n=== {header.inner_text()} ===")
 
-        odds_lista = []
-        for odds in child.query_selector_all("li.Market__OddsGroupItem"):
-            kulcs = odds.query_selector('.OddsButton__Text').inner_text()
-            ertek = odds.query_selector('.OddsButton__Odds').inner_text()
-            odds_lista.append((kulcs, ertek))
+        for group in child.query_selector_all("ul.Market__OddsGroup"):
+            title_elem = group.query_selector("li.Market__OddsGroupTitle")
+            odds_elems = group.query_selector_all("li.Market__OddsGroupItem span.OddsButton__Odds")
 
-        print(odds_lista)
-        print()
+            if title_elem and len(odds_elems) == 2:
+                title = title_elem.inner_text().strip()
+                left_odd = odds_elems[0].inner_text().strip()
+                right_odd = odds_elems[1].inner_text().strip()
 
-    #html = elem.inner_html()
-    #print(html)
+                #print(f"Gólszám: {title}")
+                print(f"Több, mint {title}: {left_odd}")
+                print(f"Kevesebb, mint {title}: {right_odd}")
+            else:
+                # fallback: régi struktúra (igen/nem, stb.)
+                for odds in group.query_selector_all("li.Market__OddsGroupItem"):
+                    kulcs_elem = odds.query_selector('.OddsButton__Text')
+                    ertek_elem = odds.query_selector('.OddsButton__Odds')
+
+                    if kulcs_elem and ertek_elem:
+                        kulcs = kulcs_elem.inner_text().strip()
+                        ertek = ertek_elem.inner_text().strip()
+                        print(f"{kulcs}: {ertek}")
+
+    browser.close()
 
 
-    browser.close()  # böngésző bezárása
-
-
-    #A hibát az okozza, hogy néhány .Market__OddsGroupItem elemben nincs .OddsButton__Text nevű childja, vagy azért, mert az adott odds más struktúrában van megadva, vagy üres az adott listaelem. Ezért a query_selector() None-t ad vissza, és utána a inner_text() meghívása hibát dob, mivel NoneType-on hívod.
