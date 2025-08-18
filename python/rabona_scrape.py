@@ -4,7 +4,7 @@ with sync_playwright() as p:
     browser = p.chromium.launch(headless=False)
     page = browser.new_page()
 
-    page.goto("https://rab0na-2351.com/hu/sport?sportids=66&catids=0&champids=21083&eventid=13243954")
+    page.goto("https://rab0na-7275.com/hu/sport?sportRoutingParams=page~event__eventId~13561516__sportId~66")
 
     # Várunk, hogy betöltődjenek a piacok
     page.wait_for_selector("._asb_expansion-panel", timeout=10000)

@@ -14,7 +14,7 @@ with sync_playwright() as p:
         "https://22bgame.com/line/football/32015-club-world-cup/267834212-real-madrid-juventus")
 
     # várakozás az oldal betöltésére
-    #page.wait_for_selector(".MarketGroupsItem", timeout=5000)
+    page.wait_for_selector(".MarketGroupsItem", timeout=5000)
     #page.screenshot(path=f"screenshot_{time.strftime("%Y-%m-%d_%H-%M-%S")}.png", full_page=True)
     page.screenshot(path="screenshot.png", full_page=True)
 
@@ -40,3 +40,4 @@ with sync_playwright() as p:
 
 
     browser.close()  # böngésző bezárása
+    

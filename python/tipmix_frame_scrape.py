@@ -5,7 +5,7 @@ with sync_playwright() as p:
     page = browser.new_page()
 
     page.goto(
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/vilag/klubcsapat-vb/real-madrid-juventus/274158475157835776/all"
+        "https://sports2.tippmixpro.hu/hu/elo-esemenyek/1/labdarugas/anglia/angol-liga-kupa/newport-millwall/277889924345237504/nepszeru"
     )
 
     page.wait_for_selector(".MarketGroupsItem", timeout=5000)
