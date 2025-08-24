@@ -1,7 +1,55 @@
 import re
 from playwright.sync_api import sync_playwright
 
-URL = "https://ivi-bettx.net/hu/prematch/football/1008013-premier-league/6794782-leeds-united-everton-fc"
+from pprint import pprint
+
+URL = "https://ivi-bettx.net/hu/prematch/football/1008007-laliga/6923959-villarreal-cf-girona-fc"
+nemkell = ["Hendikep", "Asian Handicap", "ázsiai hendikep", "Félidő/játékidő", "First half/Second half", "Pontos végeredmény", 'Győzelem nagysága']
+
+_TOTALS_RE = re.compile(r'^(\d+(?:\.\d+)?)\s+(felett|alatt)$', re.IGNORECASE)
+
+def transform(data, hazai_nev, vendeg_nev):
+    out = {}
+
+    for m in data:
+        
+        if m['market'] in nemkell:
+            continue
+
+        # market név szövegcserével
+        mname = (
+            m['market']
+            .strip()
+            .replace(hazai_nev, "1")
+            .replace(vendeg_nev, "2")
+            .replace("döntetlen", "x")
+        )
+
+        for o in m['outcomes']:
+            oname = (
+                o['name']
+                .strip()
+                .replace(hazai_nev, "1")
+                .replace(vendeg_nev, "2")
+                .replace("döntetlen", "x")
+            )
+            odd = float(o['odd'])
+
+            m_tot = _TOTALS_RE.fullmatch(oname)
+            if m_tot:
+                num, side = m_tot.groups()
+                key = f"{mname} {num}"
+                out.setdefault(key, {})
+                out[key][side.lower()] = odd
+            else:
+                out.setdefault(mname, {})
+                out[mname][oname] = odd
+    return out
+
+
+
+
+
 
 def norm(text: str) -> str:
     # több whitespace összenyomása, trim
@@ -18,7 +66,7 @@ def scroll_to_bottom(page, max_steps=20, idle_ms=800):
         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
         page.wait_for_timeout(idle_ms)
 
-def scrape(url: str, headless: bool = True):
+def scrape(url, headless):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
         context = browser.new_context(
@@ -70,17 +118,43 @@ def scrape(url: str, headless: bool = True):
             if header_text and outcomes:
                 results.append({"market": header_text, "outcomes": outcomes})
 
+
+        page.wait_for_selector('[data-test="teamName"]', timeout=15000)
+
+        locators = page.locator('[data-test="teamName"] span, [data-test="teamName"]')
+
+        count = locators.count()
+
+        seen = []
+        for i in range(count):
+            txt = locators.nth(i).inner_text().strip()
+            # normalizálás: több whitespace egyre
+            txt = re.sub(r"\s+", " ", txt)
+            if txt and txt not in seen:
+                seen.append(txt)
+
         browser.close()
-        return results
+        return results, seen
+
 
 if __name__ == "__main__":
-    data = scrape(URL, headless=True)
+    data, csapatok = scrape(URL, headless=True)
+    #print(data)
 
     # csak kiírás
     for market in data:
+        
+        if market['market'] in nemkell:
+            continue
+
         print(f"== {market['market']} ==")
+
         for o in market["outcomes"]:
-            print(f"{o['name']} — {o['odd']}")
+            print(market['market'], o['name'], "-", o['odd'])
+            #print(f"{o['name']} — {o['odd']}")
         print()
+
+    print()
+    pprint(transform(data, *csapatok))
 
 
