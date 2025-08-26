@@ -3,8 +3,8 @@ from playwright.sync_api import sync_playwright
 
 from pprint import pprint
 
-URL = "https://ivi-bettx.net/hu/prematch/football/1008007-laliga/6923959-villarreal-cf-girona-fc"
-nemkell = ["Hendikep", "Asian Handicap", "ázsiai hendikep", "Félidő/játékidő", "First half/Second half", "Pontos végeredmény", 'Győzelem nagysága']
+URL = "https://ivi-bettx.net/hu/prematch/football/1008013-premier-league/7376949-chelsea-fc-fulham-fc"
+nemkell = ["Hendikep", "Asian Handicap", "ázsiai hendikep", "Félidő/játékidő", "First half/Second half", "Pontos végeredmény", 'Győzelem nagysága', "Melyik csapat nyeri meg a mérkőzés hátralévő részét"]
 
 _TOTALS_RE = re.compile(r'^(\d+(?:\.\d+)?)\s+(felett|alatt)$', re.IGNORECASE)
 
@@ -119,6 +119,8 @@ def scrape(url, headless):
                 results.append({"market": header_text, "outcomes": outcomes})
 
 
+
+
         page.wait_for_selector('[data-test="teamName"]', timeout=15000)
 
         locators = page.locator('[data-test="teamName"] span, [data-test="teamName"]')
@@ -141,20 +143,6 @@ if __name__ == "__main__":
     data, csapatok = scrape(URL, headless=True)
     #print(data)
 
-    # csak kiírás
-    for market in data:
-        
-        if market['market'] in nemkell:
-            continue
-
-        print(f"== {market['market']} ==")
-
-        for o in market["outcomes"]:
-            print(market['market'], o['name'], "-", o['odd'])
-            #print(f"{o['name']} — {o['odd']}")
-        print()
-
-    print()
     pprint(transform(data, *csapatok))
 
 
