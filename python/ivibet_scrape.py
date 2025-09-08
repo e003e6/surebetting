@@ -1,12 +1,25 @@
 import re
 from playwright.sync_api import sync_playwright
 
+import redis
+import json
+import unicodedata
+from datetime import datetime
+
 from pprint import pprint
 
-URL = "https://ivi-bettx.net/hu/prematch/football/1008013-premier-league/7376949-chelsea-fc-fulham-fc"
 nemkell = ["Hendikep", "Asian Handicap", "ázsiai hendikep", "Félidő/játékidő", "First half/Second half", "Pontos végeredmény", 'Győzelem nagysága', "Melyik csapat nyeri meg a mérkőzés hátralévő részét"]
 
 _TOTALS_RE = re.compile(r'^(\d+(?:\.\d+)?)\s+(felett|alatt)$', re.IGNORECASE)
+
+
+# redis id generáláskor ékezetmentesiti és kisbetűsiti a csapatok neveit
+def normalize(text: str) -> str:
+    # ékezetek eltávolítása + kisbetűsítés
+    nfkd_form = unicodedata.normalize("NFKD", text)
+    only_ascii = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
+    return only_ascii.lower()
+
 
 def transform(data, hazai_nev, vendeg_nev):
     out = {}
@@ -140,9 +153,23 @@ def scrape(url, headless):
 
 
 if __name__ == "__main__":
-    data, csapatok = scrape(URL, headless=True)
-    #print(data)
 
-    pprint(transform(data, *csapatok))
+    # csatlakozunk a redis adatbázishoz
+    r = redis.Redis(host="192.168.0.74", port=8001, decode_responses=True)
 
+    # lekérzeddük az adatokat
+    url = "https://ivi-bettx.net/hu/prematch/football/1008009-vil-gbajnoks-g-selejtez-eur-pa/7389404-israel-italy"
+    data, csapatok = scrape(url, headless=True)
+
+    # az adatokat szépen struktúralizálom
+    adatok = transform(data, *csapatok)
+
+    # elmenetem a kapott adatokat a redis adatbázisba
+    idd = f'{normalize(csapatok[0])}-{normalize(csapatok[1])}-{datetime.now().strftime("%y-%m-%d")}-ivibet' 
+    r.set(idd, json.dumps(adatok, ensure_ascii=False))
+
+
+    # csak teleszeléshez! lekérzdem az adatok az adatbáziból
+    print(r.get(idd))
+    #pprint(adatok)
 

@@ -1,13 +1,11 @@
 import json
 from playwright.sync_api import sync_playwright
 
-URL = "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/anglia/premier-liga/chelsea-fulham/278899408761917440/all"
+URL = "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/spanyolorszag/spanyol-bajnoksag/rayo-vallecano-barcelona/278892993519423488/all"
 
-# Ezek NEM jelennek meg a kimenetben (pontosan egyező piacnevek)
+
 exclude_markets = {
-    # "Páros/ páratlan",
-    # "1 páros/ páratlan",
-    # "2 páros/ páratlan",
+  "Szerez gólt vagy gólpasszt ad - Rendes játékidő"
 }
 
 def label_from_item(li):
