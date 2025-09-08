@@ -13,6 +13,7 @@ with sync_playwright() as p:
 
     for child in elem.query_selector_all("article"):
         header = child.query_selector('.Market__CollapseText')
+
         if header:
             print(f"\n=== {header.inner_text()} ===")
 
