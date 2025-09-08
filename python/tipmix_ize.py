@@ -7,7 +7,7 @@ import redis
 from playwright.sync_api import sync_playwright
 
 # ---- Beállítások ----
-URL = "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/europa/vb-selejtezo-i-csoport/izrael-olaszorszag/280160772213051392/all"
+URL = "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/del-amerika/vb-selejtezo-del-amerika/venezuela-kolumbia/279678945248546816/all"
 
 EXCLUDE_MARKETS = {
     "Szerez gólt vagy gólpasszt ad - Rendes játékidő",
@@ -53,6 +53,34 @@ EXCLUDE_MARKETS = {
     "Szerez gólt? - Rendes játékidő",
     "Ki szerzi a(z) 2. gólt? - Rendes játékidő",
     "2 vagy több gólt szerez - Rendes játékidő",
+    "3 vagy több gólt szerez - Rendes játékidő", 
+    "Ázsiai Hendikep, hátralévő rész (1:0) - Rendes játékidő",
+    "Szögletszám - Ázsiai hendikep - Rendes játékidő",
+    "Szögletszám - Ázsiai hendikep - 1. félidő",
+    "Büntetőlapot kap? - Rendes játékidő",
+    " Ázsiai Hendikep, hátralévő rész (1:0) - 1. félidő",
+    " Pontos eredmény - 1. félidő",
+    " Pontos eredmény - 2. félidő",
+    " Piros lapot kap? - Rendes játékidő",
+    " A(z) 2. gól megszerzésének ideje - Rendes játékidő",
+    " 1 mikor szerzi a(z) 2. gólját? - Rendes játékidő"
+    "1 szerez gólt az adott időszakaszban (perc): 24:00-28:59? - Rendes játékidő",
+    "1 szerez gólt az adott időszakaszban (perc): 25:00-39:59? - Rendes játékidő",
+    "1 szerez gólt az adott időszakaszban (perc): 25:00-34:59? - Rendes játékidő",
+    "1 szerez gólt az adott időszakaszban (perc): 25:00-29:59? - Rendes játékidő",
+    "Szögletet végez el az adott időszakaszban (perc): 25:00-29:59? - Rendes játékidő",
+    "Szögletet végez el az adott időszakaszban (perc): 30:00-39:59? - Rendes játékidő",
+    "Kétesély az adott időszakaszban: 25:00-39:59 - Rendes játékidő",
+    "Lesz gól az adott időszakaszban (perc): 24:00-28:59? - Rendes játékidő",
+    "Lesz gól az adott időszakaszban (perc): 25:00-39:59? - Rendes játékidő",
+    "Lesz gól az adott időszakaszban (perc): 25:00-34:59? - Rendes játékidő",
+    "Lesz gól az adott időszakaszban (perc): 25:00-29:59? - Rendes játékidő",
+    " Lesz szöglet az adott időszakaszban (perc): 25:00-29:59? - Rendes játékidő",
+    "Lesz szöglet az adott időszakaszban (perc): 30:00-39:59? - Rendes játékidő",
+    "1X2 + Mindkét csapat szerez gólt - 1. félidő"
+
+
+
 }
 
 # "szám felett/alatt" felismerése (pl. "2.5 felett" vagy "2,5 felett")

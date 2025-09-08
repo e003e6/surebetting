@@ -158,8 +158,8 @@ if __name__ == "__main__":
     r = redis.Redis(host="192.168.0.74", port=8001, decode_responses=True)
 
     # lekérzeddük az adatokat
-    url = "https://ivi-bettx.net/hu/prematch/football/1008009-vil-gbajnoks-g-selejtez-eur-pa/7389404-israel-italy"
-    data, csapatok = scrape(url, headless=True)
+    url = "https://ivi-bettx.net/hu/prematch/football/1008009-vilagbajnoksag-selejtezo-europa/7389418-azerbaijan-ukraine"
+    data, csapatok = scrape(url, headless=False)
 
     # az adatokat szépen struktúralizálom
     adatok = transform(data, *csapatok)
