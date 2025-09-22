@@ -11,7 +11,7 @@ with sync_playwright() as p:
 
     # oldal megnyitása
     page.goto(
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/vilag/klubcsapat-vb-h-csoport/salzburg-real-madrid/273476278799175680/all")
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/torokorszag/torok-bajnoksag/goztepe-izmir-besiktas/281186962913759232/nepszeru")
 
     # várakozás az oldal betöltésére
     page.wait_for_selector(".MarketGroupsItem", timeout=5000)

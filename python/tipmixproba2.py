@@ -2,10 +2,10 @@ import json
 import re
 from playwright.sync_api import sync_playwright
 
-URL = "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/europa/vb-selejtezo-a-csoport/szlovakia-nemetorszag/274736704015962112/all", "1 szerez gólt az adott időszakaszban (perc): 0:00-9:59? - Rendes játékidő", "1 szerez gólt az adott időszakaszban (perc): 0:00-14:59? - Rendes játékidő", "1 mikor szerzi a(z) 1. gólját? - Rendes játékidő", "Szögletet végez el az adott időszakaszban (perc): 0:00-9:59? - Rendes játékidő", "2 szerez gólt az adott időszakaszban (perc): 0:00-4:59? - Rendes játékidő", "2 szerez gólt az adott időszakaszban (perc): 0:00-4:59? - Rendes játékidő", "2 szerez gólt az adott időszakaszban (perc): 0:00-9:59? - Rendes játékidő", "2 szerez gólt az adott időszakaszban (perc): 0:00-14:59? - Rendes játékidő", "2 mikor szerzi a(z) 1. gólját? - Rendes játékidő", "Mindkét csapat szerez gólt az adott időszakaszban: 0:00-14:59 - Rendes játékidő"
-
+URL = "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/magyarorszag/nb-i/kisvarda-dvsc/280460361646346240/nepszeru"
 EXCLUDE_MARKETS = {
-    "Szerez gólt vagy gólpasszt ad - Rendes játékidő" , "1 szerez gólt az adott időszakaszban (perc): 0:00-4:59? - Rendes játékidő"
+    "Gólpasszt ad - Rendes játékidő"
+
 }
 
 def _normalize_text(txt: str, home: str, away: str) -> str:
@@ -44,22 +44,31 @@ def scrape_event(url: str, headless: bool = True, exclude=None):
         # Egyetlen evaluate: hazai/venég nevek + piacok/opciók kinyerése
         raw = page.evaluate("""
         () => {
-          const getTxt = (sel) => {
-            const el = document.querySelector(sel);
+          const getTxt = (sel, root = document) => {
+            const el = root.querySelector(sel);
             return el ? el.textContent.trim() : "";
           };
+
           const homeName = getTxt(".MatchDetailsHeader__PartName--Home");
           const awayName = getTxt(".MatchDetailsHeader__PartName--Away");
 
           const out = [];
           document.querySelectorAll("ul.Market__OddsGroup").forEach(group => {
+            // Szülő (article) címe – ez az "eredeti" vagy "régi" cím
+            let parentTitle = "";
+            const art = group.closest("article");
+            if (art) parentTitle = getTxt(".Market__CollapseText", art);
+
+            // Csoport címe – ez az "új" cím (pl. 0:1)
+            let groupTitle = getTxt("li.Market__OddsGroupTitle", group);
+
+            // Ha mindkettő megvan és eltér, akkor "régi - új"
+            // Egyébként amelyik elérhető
             let marketName = "";
-            const titleEl = group.querySelector("li.Market__OddsGroupTitle");
-            if (titleEl) marketName = titleEl.textContent.trim();
-            if (!marketName) {
-              const art = group.closest("article");
-              const h = art ? art.querySelector(".Market__CollapseText") : null;
-              marketName = h ? h.textContent.trim() : "Ismeretlen piac";
+            if (parentTitle && groupTitle && parentTitle !== groupTitle) {
+              marketName = `${parentTitle} - ${groupTitle}`;
+            } else {
+              marketName = groupTitle || parentTitle || "Ismeretlen piac";
             }
 
             const items = [];
@@ -103,6 +112,7 @@ def scrape_event(url: str, headless: bool = True, exclude=None):
         }
         """)
 
+
         browser.close()
 
     home = (raw.get("homeName") or "").strip()
@@ -111,6 +121,7 @@ def scrape_event(url: str, headless: bool = True, exclude=None):
     markets = {}
     for market_name, items in raw["markets"]:
         # piacnév normalizálása (hazai/away/döntetlen cserék minden szövegben)
+        print(market_name)
         norm_market = _normalize_text(market_name, home, away)
         if norm_market in exclude:
             continue
@@ -130,4 +141,4 @@ def scrape_event(url: str, headless: bool = True, exclude=None):
 
 if __name__ == "__main__":
     data = scrape_event(URL, headless=True, exclude=EXCLUDE_MARKETS)
-    print(json.dumps(data, ensure_ascii=False, indent=2))
+    #print(json.dumps(data, ensure_ascii=False, indent=2))

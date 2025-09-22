@@ -7,80 +7,9 @@ import redis
 from playwright.sync_api import sync_playwright
 
 # ---- Beállítások ----
-URL = "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/del-amerika/vb-selejtezo-del-amerika/venezuela-kolumbia/279678945248546816/all"
+URL = "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/magyarorszag/nb-i/kisvarda-dvsc/280460361646346240/nepszeru"
 
 EXCLUDE_MARKETS = {
-    "Szerez gólt vagy gólpasszt ad - Rendes játékidő",
-    "1 szerez gólt az adott időszakaszban (perc): 0:00-4:59? - Rendes játékidő",
-    "1 szerez gólt az adott időszakaszban (perc): 0:00-9:59? - Rendes játékidő",
-    "1 szerez gólt az adott időszakaszban (perc): 0:00-14:59? - Rendes játékidő",
-    "1 mikor szerzi a(z) 1. gólját? - Rendes játékidő",
-    "Szögletet végez el az adott időszakaszban (perc): 0:00-9:59? - Rendes játékidő",
-    "2 szerez gólt az adott időszakaszban (perc): 0:00-4:59? - Rendes játékidő",
-    "2 szerez gólt az adott időszakaszban (perc): 0:00-9:59? - Rendes játékidő",
-    "2 szerez gólt az adott időszakaszban (perc): 0:00-14:59? - Rendes játékidő",
-    "2 mikor szerzi a(z) 1. gólját? - Rendes játékidő",
-    "Mindkét csapat szerez gólt az adott időszakaszban: 0:00-14:59 - Rendes játékidő",
-    "1X2 + Mindkét csapat szerez gólt - Rendes játékidő",
-    "Pontos eredmény - Rendes játékidő",
-    "1X2 + Gólszám 1,5 - Rendes játékidő",
-    "1X2 + Gólszám 2,5 - Rendes játékidő",
-    "1X2 + Gólszám 3,5 - Rendes játékidő",
-    "1X2 + Gólszám 4,5 - Rendes játékidő",
-    "1X2 + Gólszám 5,5 - Rendes játékidő",
-    "Félidő/végeredmény - Rendes játékidő",
-    "Ázsiai hendikep - Rendes játékidő",
-    "Mindkét csapat szerez gólt + Gólszám - Rendes játékidő",
-    "Kétesély + Mindkét csapat szerez gólt - Rendes játékidő",
-    "Kétesély + Mindkét csapat szerez gólt - 1. félidő",
-    "Pontosan",
-    "Tartomány",
-    "X vagy Több",
-    "Félidő/végeredmény + Gólszám 1,5 - Rendes játékidő",
-    "Félidő/végeredmény + Gólszám 2,5 - Rendes játékidő",
-    "Félidő/végeredmény + Gólszám 3,5 - Rendes játékidő",
-    "Játékrész eredménye + csapat góljainak száma - Rendes játékidő",
-    "Kétesély + Gólszám - Rendes játékidő",
-    "Kétesély + Gólszám 1,5 - Rendes játékidő",
-    "Kétesély + Gólszám 2,5 - Rendes játékidő",
-    "Kétesély + Gólszám 3,5 - Rendes játékidő",
-    "Kétesély + Gólszám 4,5 - Rendes játékidő",
-    "Kétesély + Gólszám 1,5 - 1. félidő",
-    "Kétesély + Gólszám 2,5 - 1. félidő",
-    "Kétesély + Gólszám 3,5 - 1. félidő",
-    "Kétesély + Gólszám 4,5 - 1. félidő",
-    "Kétesély - Rendes játékidő",
-    "Szerez gólt? - Rendes játékidő",
-    "Ki szerzi a(z) 2. gólt? - Rendes játékidő",
-    "2 vagy több gólt szerez - Rendes játékidő",
-    "3 vagy több gólt szerez - Rendes játékidő", 
-    "Ázsiai Hendikep, hátralévő rész (1:0) - Rendes játékidő",
-    "Szögletszám - Ázsiai hendikep - Rendes játékidő",
-    "Szögletszám - Ázsiai hendikep - 1. félidő",
-    "Büntetőlapot kap? - Rendes játékidő",
-    " Ázsiai Hendikep, hátralévő rész (1:0) - 1. félidő",
-    " Pontos eredmény - 1. félidő",
-    " Pontos eredmény - 2. félidő",
-    " Piros lapot kap? - Rendes játékidő",
-    " A(z) 2. gól megszerzésének ideje - Rendes játékidő",
-    " 1 mikor szerzi a(z) 2. gólját? - Rendes játékidő"
-    "1 szerez gólt az adott időszakaszban (perc): 24:00-28:59? - Rendes játékidő",
-    "1 szerez gólt az adott időszakaszban (perc): 25:00-39:59? - Rendes játékidő",
-    "1 szerez gólt az adott időszakaszban (perc): 25:00-34:59? - Rendes játékidő",
-    "1 szerez gólt az adott időszakaszban (perc): 25:00-29:59? - Rendes játékidő",
-    "Szögletet végez el az adott időszakaszban (perc): 25:00-29:59? - Rendes játékidő",
-    "Szögletet végez el az adott időszakaszban (perc): 30:00-39:59? - Rendes játékidő",
-    "Kétesély az adott időszakaszban: 25:00-39:59 - Rendes játékidő",
-    "Lesz gól az adott időszakaszban (perc): 24:00-28:59? - Rendes játékidő",
-    "Lesz gól az adott időszakaszban (perc): 25:00-39:59? - Rendes játékidő",
-    "Lesz gól az adott időszakaszban (perc): 25:00-34:59? - Rendes játékidő",
-    "Lesz gól az adott időszakaszban (perc): 25:00-29:59? - Rendes játékidő",
-    " Lesz szöglet az adott időszakaszban (perc): 25:00-29:59? - Rendes játékidő",
-    "Lesz szöglet az adott időszakaszban (perc): 30:00-39:59? - Rendes játékidő",
-    "1X2 + Mindkét csapat szerez gólt - 1. félidő"
-
-
-
 }
 
 # "szám felett/alatt" felismerése (pl. "2.5 felett" vagy "2,5 felett")
@@ -107,6 +36,7 @@ def _normalize_text(txt: str, home: str, away: str) -> str:
 def _norm_ws(txt: str) -> str:
     return re.sub(r"\s+", " ", (txt or "").strip())
 
+
 # ---- Scraper ----
 def scrape_event_raw(url: str, headless: bool = True):
     """Visszaadja: homeName, awayName, markets: List[[market_name, List[[label, odd]]]]"""
@@ -119,6 +49,7 @@ def scrape_event_raw(url: str, headless: bool = True):
             if request.resource_type in ("image", "media", "font", "stylesheet"):
                 return route.abort()
             return route.continue_()
+        
         context.route("**/*", _block_non_essentials)
 
         page = context.new_page()
@@ -230,6 +161,9 @@ def transform_markets(raw, exclude_markets: set):
 if __name__ == "__main__":
     # 1) Oldal beolvasása
     raw = scrape_event_raw(URL, headless=True)
+    print(raw)
+
+    '''
 
     # 2) Transzformáció a kívánt struktúrára (ugyanaz a végeredmény-formátum, mint az Ivibet kódodnál)
     adatok, home, away = transform_markets(raw, EXCLUDE_MARKETS)
@@ -242,3 +176,4 @@ if __name__ == "__main__":
 
     # 4) Ellenőrző kiírás
     print(r.get(key))
+    '''
