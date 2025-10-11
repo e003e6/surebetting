@@ -24,7 +24,7 @@ def normalize(text: str) -> str:
 def transform(data, hazai_nev, vendeg_nev):
     out = {}
 
-    for m in data:
+    for m in data:  
         
         if m['market'] in nemkell:
             continue
@@ -158,7 +158,7 @@ if __name__ == "__main__":
     r = redis.Redis(host="192.168.0.74", port=8001, decode_responses=True)
 
     # lekérzeddük az adatokat
-    url = "https://ivi-bettx.net/hu/prematch/football/1008009-vilagbajnoksag-selejtezo-europa/7389418-azerbaijan-ukraine"
+    url = "https://ivi-bettx.net/hu/prematch/football/1008013-anglia-premier-league/7714434-arsenal-fc-west-ham-united"
     data, csapatok = scrape(url, headless=False)
 
     # az adatokat szépen struktúralizálom
