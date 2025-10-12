@@ -6,70 +6,139 @@ import json
 import unicodedata
 from datetime import datetime
 
-from pprint import pprint
+# ====== Beállítások ======
+# Ha akarsz piacokat kizárni, tedd ide a pontos market címet:
+NEM_KELL: list[str] = []
 
-nemkell = ["Hendikep", "Asian Handicap", "ázsiai hendikep", "Félidő/játékidő", "First half/Second half", "Pontos végeredmény", 'Győzelem nagysága', "Melyik csapat nyeri meg a mérkőzés hátralévő részét"]
+# ====== Regexek ======
+_TOTALS_ITEM_RE = re.compile(r'^(\d+(?:[.,]\d+)?)\s+(felett|alatt)$', re.IGNORECASE)
+_TOTALS_MARKET_RE = re.compile(r'^(?:Összesített|ázsiai összesen)\s+(\d+(?:[.,]\d+)?)$', re.IGNORECASE)
+_HCAP_MARKET_RE = re.compile(r'^Hendikep\s+(\d+:\d+)$', re.IGNORECASE)
 
-_TOTALS_RE = re.compile(r'^(\d+(?:\.\d+)?)\s+(felett|alatt)$', re.IGNORECASE)
-
-
-# redis id generáláskor ékezetmentesiti és kisbetűsiti a csapatok neveit
+# ====== Segédfüggvények ======
 def normalize(text: str) -> str:
-    # ékezetek eltávolítása + kisbetűsítés
-    nfkd_form = unicodedata.normalize("NFKD", text)
-    only_ascii = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
+    """Redis ID-hez: ékezet nélkül, kisbetűvel."""
+    nfkd = unicodedata.normalize("NFKD", text or "")
+    only_ascii = "".join(c for c in nfkd if not unicodedata.combining(c))
     return only_ascii.lower()
 
+def norm(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "")).strip()
 
-def transform(data, hazai_nev, vendeg_nev):
-    out = {}
+def to_comma_decimal(x: str | float) -> str:
+    """Odds egységesítése: vesszős tizedes. Meghagyja az egész számot .00 nélkül."""
+    try:
+        f = float(str(x).replace(",", "."))
+        s = f"{f:.2f}"
+        if s.endswith("00"):
+            s = s[:-3]
+        return s.replace(".", ",")
+    except Exception:
+        return str(x).replace(".", ",")
 
-    for m in data:  
-        
-        if m['market'] in nemkell:
+def replace_1x2(s: str, home: str, away: str) -> str:
+    """Hazai→1, döntetlen→x, vendég→2 (szó szerinti csere, case-sensitive a HTML-ből jövő nevek miatt)."""
+    return (s.replace(home, "1")
+             .replace(away, "2")
+             .replace("döntetlen", "x")
+             .replace("Döntetlen", "x"))
+
+# ====== Átalakítás a kívánt szerkezetre ======
+def build_output(markets, home_team: str, away_team: str):
+    """
+    Szabály:
+      - ha pontosan 2 kimenet: lapos dict {név: odd}
+      - ha 2-nél több kimenet:
+          * "Összesített X" vagy "ázsiai összesen X" → Gólszám - Rendes játékidő: {X: {"Több, mint": ..., "Kevesebb, mint": ...}}
+          * "Hendikep a:b" → Hendikep - Rendes játékidő: {a:b: {kimenet: odd, ...}}
+          * egyébként: piac_címe: {kimenet: odd, ...} (egy szint)
+    """
+    out: dict[str, dict] = {}
+
+    goals_fulltime: dict[str, dict] = {}     # "2,5": {"Több, mint": "...", "Kevesebb, mint": "..."}
+    hcap_fulltime: dict[str, dict] = {}      # "0:1": {"1 (0:1)": "...", ...}
+
+    for m in markets:
+        raw_title = norm(m.get("market", ""))
+        if not raw_title or raw_title in NEM_KELL:
             continue
 
-        # market név szövegcserével
-        mname = (
-            m['market']
-            .strip()
-            .replace(hazai_nev, "1")
-            .replace(vendeg_nev, "2")
-            .replace("döntetlen", "x")
-        )
+        # 1/x/2 helyettesítés csak a bennük lévő szövegben, a címet viszont a mapping kedvéért is nézzük:
+        title = replace_1x2(raw_title, home_team, away_team)
+        outs = m.get("outcomes", []) or []
+        # outcome-ok feldolgozása (név + odd)
+        processed = []
+        for o in outs:
+            n = replace_1x2(norm(o.get("name", "")), home_team, away_team)
+            odd = to_comma_decimal(o.get("odd", ""))
+            if n or odd:
+                processed.append((n, odd))
 
-        for o in m['outcomes']:
-            oname = (
-                o['name']
-                .strip()
-                .replace(hazai_nev, "1")
-                .replace(vendeg_nev, "2")
-                .replace("döntetlen", "x")
-            )
-            odd = float(o['odd'])
+        if not processed:
+            continue
 
-            m_tot = _TOTALS_RE.fullmatch(oname)
-            if m_tot:
-                num, side = m_tot.groups()
-                key = f"{mname} {num}"
-                out.setdefault(key, {})
-                out[key][side.lower()] = odd
-            else:
-                out.setdefault(mname, {})
-                out[mname][oname] = odd
+        # ==== Ha 2-nél több kimenet van ====
+        if len(processed) > 2:
+            # Totals-csoport?
+            mtot = _TOTALS_MARKET_RE.match(title)
+            if mtot:
+                line = mtot.group(1).replace(".", ",")
+                bucket = goals_fulltime.setdefault(line, {"Több, mint": "", "Kevesebb, mint": ""})
+                # outcome névből döntjük el a felett/alatt-ot
+                for oname, oodd in processed:
+                    low = oname.lower()
+                    # ha mégis "X felett" teljes kifejezést kaptunk
+                    m_item = _TOTALS_ITEM_RE.match(low)
+                    if "felett" in low or (m_item and m_item.group(2).lower() == "felett"):
+                        bucket["Több, mint"] = oodd
+                    elif "alatt" in low or (m_item and m_item.group(2).lower() == "alatt"):
+                        bucket["Kevesebb, mint"] = oodd
+                continue
+
+            # Hendikep-csoport?
+            mhcap = _HCAP_MARKET_RE.match(title)
+            if mhcap:
+                sub = mhcap.group(1)  # "a:b"
+                subbucket = hcap_fulltime.setdefault(sub, {})
+                for oname, oodd in processed:
+                    subbucket[oname] = oodd
+                continue
+
+            # Egyéb többkimenetes piac → egy szintű nagy dict a piac címe alatt
+            bucket = out.setdefault(title, {})
+            for oname, oodd in processed:
+                # ütközés ellen védekezés
+                key = oname or "ismeretlen"
+                if key in bucket and bucket[key] != oodd:
+                    i = 2
+                    while f"{key} [{i}]" in bucket:
+                        i += 1
+                    key = f"{key} [{i}]"
+                bucket[key] = oodd
+            continue
+
+        # ==== Pontosan 2 kimenet → lapos dict a piac címe alatt ====
+        else:
+            bucket = out.setdefault(title, {})
+            for oname, oodd in processed:
+                key = oname or "ismeretlen"
+                if key in bucket and bucket[key] != oodd:
+                    i = 2
+                    while f"{key} [{i}]" in bucket:
+                        i += 1
+                    key = f"{key} [{i}]"
+                bucket[key] = oodd
+
+    # Gyűjtők beemelése
+    if goals_fulltime:
+        out["Gólszám - Rendes játékidő"] = goals_fulltime
+    if hcap_fulltime:
+        out["Hendikep - Rendes játékidő"] = hcap_fulltime
+
     return out
 
-
-
-
-
-
-def norm(text: str) -> str:
-    # több whitespace összenyomása, trim
-    return re.sub(r"\s+", " ", text or "").strip()
-
+# ====== Scraper ======
 def scroll_to_bottom(page, max_steps=20, idle_ms=800):
-    """Lassan legörgünk a lap aljára, hogy minden lazy-loadolt piac betöltődjön."""
     last_h = 0
     for _ in range(max_steps):
         h = page.evaluate("document.body.scrollHeight")
@@ -79,7 +148,7 @@ def scroll_to_bottom(page, max_steps=20, idle_ms=800):
         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
         page.wait_for_timeout(idle_ms)
 
-def scrape(url, headless):
+def scrape(url: str, headless: bool):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
         context = browser.new_context(
@@ -92,10 +161,7 @@ def scrape(url, headless):
         page = context.new_page()
         page.goto(url, wait_until="domcontentloaded")
 
-        # Várunk, amíg betöltődnek a piacok
         page.wait_for_selector('[data-test="fullEventMarket"]', timeout=20000)
-
-        # Görgessünk végig, hogy minden piac tényleg a DOM-ban legyen
         scroll_to_bottom(page)
 
         markets = page.locator('[data-test="fullEventMarket"]')
@@ -104,16 +170,12 @@ def scrape(url, headless):
 
         for i in range(mcount):
             m = markets.nth(i)
-
-            # Piac címe
             header_loc = m.locator('[data-test="sport-event-table-market-header"]')
-            header_text = ""
             if header_loc.count() > 0:
                 header_text = norm(header_loc.inner_text())
             else:
                 header_text = norm(m.inner_text()).split("\n")[0]
 
-            # Kimenetek
             rows = m.locator('[data-test="sport-event-table-additional-market"]')
             outcomes = []
             for j in range(rows.count()):
@@ -121,55 +183,49 @@ def scrape(url, headless):
                 name_loc = row.locator('[data-test="factor-name"]')
                 name = norm(name_loc.inner_text()) if name_loc.count() > 0 else ""
 
-                # odds
                 odd_loc = row.locator('[data-test="additionalOdd"] span')
                 odd = norm(odd_loc.first.inner_text()) if odd_loc.count() > 0 else ""
 
                 if name or odd:
                     outcomes.append({"name": name, "odd": odd})
- 
+
             if header_text and outcomes:
                 results.append({"market": header_text, "outcomes": outcomes})
 
-
-
-
+        # Csapatnevek
         page.wait_for_selector('[data-test="teamName"]', timeout=15000)
-
-        locators = page.locator('[data-test="teamName"] span, [data-test="teamName"]')
-
-        count = locators.count()
-
+        locs = page.locator('[data-test="teamName"] span, [data-test="teamName"]')
         seen = []
-        for i in range(count):
-            txt = locators.nth(i).inner_text().strip()
-            # normalizálás: több whitespace egyre
-            txt = re.sub(r"\s+", " ", txt)
+        for i in range(locs.count()):
+            txt = norm(locs.nth(i).inner_text())
             if txt and txt not in seen:
                 seen.append(txt)
 
         browser.close()
         return results, seen
 
-
+# ====== Főprogram ======
 if __name__ == "__main__":
+    # Redis
+    #r = redis.Redis(host="192.168.0.74", port=8001, decode_responses=True)
 
-    # csatlakozunk a redis adatbázishoz
-    r = redis.Redis(host="192.168.0.74", port=8001, decode_responses=True)
-
-    # lekérzeddük az adatokat
+    # Példa URL (maradhat, cserélheted)
     url = "https://ivi-bettx.net/hu/prematch/football/1008013-anglia-premier-league/7714434-arsenal-fc-west-ham-united"
-    data, csapatok = scrape(url, headless=False)
 
-    # az adatokat szépen struktúralizálom
-    adatok = transform(data, *csapatok)
+    data, teams = scrape(url, headless=False)
 
-    # elmenetem a kapott adatokat a redis adatbázisba
-    idd = f'{normalize(csapatok[0])}-{normalize(csapatok[1])}-{datetime.now().strftime("%y-%m-%d")}-ivibet' 
-    r.set(idd, json.dumps(adatok, ensure_ascii=False))
+    if len(teams) >= 2:
+        home, away = teams[0], teams[1]
+    else:
+        home, away = "Hazai", "Vendég"
 
+    # Kimenet építése a szabály szerint (2 vs. >2 kimenet)
+    output = build_output(data, home, away)
 
-    # csak teleszeléshez! lekérzdem az adatok az adatbáziból
-    print(r.get(idd))
-    #pprint(adatok)
+    # Mentés Redisbe
+    key = f"{normalize(home)}-{normalize(away)}-{datetime.now().strftime('%y-%m-%d')}-ivibet"
+    print(output)
+    #r.set(key, json.dumps(output, ensure_ascii=False))
 
+    # Ellenőrző kiírás
+    #print(r.get(key))
