@@ -1,7 +1,7 @@
 import json
 from playwright.sync_api import sync_playwright
 
-URL = "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/magyarorszag/nb-i/kisvarda-dvsc/280460361646346240/nepszeru"
+URL = "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/magyarorszag/nb-i/gyor-ftc/281991905101877248/nepszeru"
 
 # Ezek NEM jelennek meg a kimenetben (pontosan egyező piacnevek)
 exclude_markets = {
@@ -77,7 +77,8 @@ def odds_from_item(li):
 
 
 
-def scrape_event(url: str, headless: bool = True, exclude=None):
+def scrape_event(url, headless=True, exclude=None):
+
     if exclude is None:
         exclude = set()
 
@@ -135,6 +136,7 @@ def scrape_event(url: str, headless: bool = True, exclude=None):
     markets = {k: v for k, v in markets.items() if v}
     return markets
 
+
 if __name__ == "__main__":
     data = scrape_event(URL, headless=False, exclude=exclude_markets)
-    print(json.dumps(data, ensure_ascii=False, indent=2))
+    #print(json.dumps(data, ensure_ascii=False, indent=2))
