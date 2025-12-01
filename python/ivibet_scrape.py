@@ -1,4 +1,6 @@
 import re
+import time
+
 from playwright.sync_api import sync_playwright
 
 import redis
@@ -7,8 +9,7 @@ import unicodedata
 from datetime import datetime
 
 # ====== Beállítások ======
-# Ha akarsz piacokat kizárni, tedd ide a pontos market címet:
-NEM_KELL: list[str] = []
+NEM_KELL = []
 
 # ====== Regexek ======
 _TOTALS_ITEM_RE = re.compile(r'^(\d+(?:[.,]\d+)?)\s+(felett|alatt)$', re.IGNORECASE)
@@ -16,7 +17,7 @@ _TOTALS_MARKET_RE = re.compile(r'^(?:Összesített|ázsiai összesen)\s+(\d+(?:[
 _HCAP_MARKET_RE = re.compile(r'^Hendikep\s+(\d+:\d+)$', re.IGNORECASE)
 
 # ====== Segédfüggvények ======
-def normalize(text: str) -> str:
+def normalize(text):
     """Redis ID-hez: ékezet nélkül, kisbetűvel."""
     nfkd = unicodedata.normalize("NFKD", text or "")
     only_ascii = "".join(c for c in nfkd if not unicodedata.combining(c))
@@ -36,7 +37,7 @@ def to_comma_decimal(x: str | float) -> str:
     except Exception:
         return str(x).replace(".", ",")
 
-def replace_1x2(s: str, home: str, away: str) -> str:
+def replace_1x2(s, home, away):
     """Hazai→1, döntetlen→x, vendég→2 (szó szerinti csere, case-sensitive a HTML-ből jövő nevek miatt)."""
     return (s.replace(home, "1")
              .replace(away, "2")
@@ -44,7 +45,7 @@ def replace_1x2(s: str, home: str, away: str) -> str:
              .replace("Döntetlen", "x"))
 
 # ====== Átalakítás a kívánt szerkezetre ======
-def build_output(markets, home_team: str, away_team: str):
+def build_output(markets, home_team, away_team):
     """
     Szabály:
       - ha pontosan 2 kimenet: lapos dict {név: odd}
@@ -53,10 +54,10 @@ def build_output(markets, home_team: str, away_team: str):
           * "Hendikep a:b" → Hendikep - Rendes játékidő: {a:b: {kimenet: odd, ...}}
           * egyébként: piac_címe: {kimenet: odd, ...} (egy szint)
     """
-    out: dict[str, dict] = {}
+    out = {}
 
-    goals_fulltime: dict[str, dict] = {}     # "2,5": {"Több, mint": "...", "Kevesebb, mint": "..."}
-    hcap_fulltime: dict[str, dict] = {}      # "0:1": {"1 (0:1)": "...", ...}
+    goals_fulltime = {}     # "2,5": {"Több, mint": "...", "Kevesebb, mint": "..."}
+    hcap_fulltime = {}      # "0:1": {"1 (0:1)": "...", ...}
 
     for m in markets:
         raw_title = norm(m.get("market", ""))
@@ -66,6 +67,7 @@ def build_output(markets, home_team: str, away_team: str):
         # 1/x/2 helyettesítés csak a bennük lévő szövegben, a címet viszont a mapping kedvéért is nézzük:
         title = replace_1x2(raw_title, home_team, away_team)
         outs = m.get("outcomes", []) or []
+
         # outcome-ok feldolgozása (név + odd)
         processed = []
         for o in outs:
@@ -148,7 +150,8 @@ def scroll_to_bottom(page, max_steps=20, idle_ms=800):
         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
         page.wait_for_timeout(idle_ms)
 
-def scrape(url: str, headless: bool):
+def scrape(url, headless):
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
         context = browser.new_context(
@@ -159,7 +162,28 @@ def scrape(url: str, headless: bool):
             ),
         )
         page = context.new_page()
-        page.goto(url, wait_until="domcontentloaded")
+
+        page.goto("https://ivi-bettx.net/hu")
+        page.wait_for_timeout(4000)  # kicsi várakozás, amíg a script betölt
+
+        # ÚJ: kliensoldali navigáció a SPA-ban
+        page.evaluate(
+            """(u) => {
+                const t = new URL(u);
+                const path = t.pathname + t.search + t.hash;
+                history.pushState(null, "", path);
+                window.dispatchEvent(new Event("popstate"));
+            }""",
+            url,
+        )
+
+        # Várjunk, hogy tényleg erre az útvonalra állt-e a SPA
+        page.wait_for_function(
+            "(u) => window.location.pathname.concat(window.location.search).includes(u)",
+            arg="/prematch/football/1008009-vilagbajnoksag-selejtezo-europa/7736701-faroe-islands-czechia",
+            timeout=15000,
+        )
+
 
         page.wait_for_selector('[data-test="fullEventMarket"]', timeout=20000)
         scroll_to_bottom(page)
@@ -171,6 +195,7 @@ def scrape(url: str, headless: bool):
         for i in range(mcount):
             m = markets.nth(i)
             header_loc = m.locator('[data-test="sport-event-table-market-header"]')
+
             if header_loc.count() > 0:
                 header_text = norm(header_loc.inner_text())
             else:
@@ -206,24 +231,20 @@ def scrape(url: str, headless: bool):
 
 # ====== Főprogram ======
 if __name__ == "__main__":
-    # Redis
     #r = redis.Redis(host="192.168.0.74", port=8001, decode_responses=True)
 
     # Példa URL (maradhat, cserélheted)
-    url = "https://ivi-bettx.net/hu/prematch/football/1008013-anglia-premier-league/7714434-arsenal-fc-west-ham-united"
+    url = 'https://ivi-bettx.net/hu/prematch/football/1008009-vilagbajnoksag-selejtezo-europa/7695412-portugal-hungary'
 
     data, teams = scrape(url, headless=False)
 
-    if len(teams) >= 2:
-        home, away = teams[0], teams[1]
-    else:
-        home, away = "Hazai", "Vendég"
+    hazai, vendeg = teams[0], teams[1]
 
     # Kimenet építése a szabály szerint (2 vs. >2 kimenet)
-    output = build_output(data, home, away)
+    output = build_output(data, hazai, vendeg)
 
     # Mentés Redisbe
-    key = f"{normalize(home)}-{normalize(away)}-{datetime.now().strftime('%y-%m-%d')}-ivibet"
+    key = f"{normalize(hazai)}-{normalize(vendeg)}-{datetime.now().strftime('%y-%m-%d')}-ivibet"
     print(output)
     #r.set(key, json.dumps(output, ensure_ascii=False))
 
