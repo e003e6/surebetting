@@ -13,8 +13,12 @@ from seged import *
 
 
 def get_key(soup):
-    hazai = normalize_text(soup.select_one('.MatchDetailsHeader__PartName--Home').get_text()).replace('_', ' ').split()[0]
-    venged = normalize_text(soup.select_one('.MatchDetailsHeader__PartName--Away').get_text()).replace('_', ' ').split()[0]
+    h = soup.select_one('.MatchDetailsHeader__PartName--Home').get_text()
+    v = soup.select_one('.MatchDetailsHeader__PartName--Away').get_text()
+
+    hazai = normalize_team_id(h)
+    venged = normalize_team_id(v)
+
     s = soup.select_one('.MatchTime__InfoPart').get_text()
     datum = dateparser.parse(s, languages=['hu']).strftime("%Y-%m-%d")
     return f'{hazai}-{venged}-{datum}-tippmix'
@@ -181,7 +185,8 @@ async def run_scraper(url, df, kell, headless=True, interval_sec=60, iterations=
                 html = await page.content()
                 key, result = parser_fn(html, df, kell)
 
-                print(key, result)
+                #print(key, result)
+                print('Leolvasva:', key)
 
                 # REDIS RÉSZ
                 if result != elozoresult:
@@ -189,7 +194,8 @@ async def run_scraper(url, df, kell, headless=True, interval_sec=60, iterations=
                     await r.set(key, json.dumps(result, ensure_ascii=False))
                     new_v = await r.incr("lastupdate")
 
-                    print('Van változás az adatokban:', key, '\n', result, '\nVáltozás mentve az adatbázisba:', new_v, '\n')
+                    #print('Van változás az adatokban:', key, '\n', result, '\nVáltozás mentve az adatbázisba:', new_v, '\n')
+                    print('Van változás az adatokban:', key)
 
                 elozoresult = result
                 count += 1
@@ -210,12 +216,15 @@ async def run_scraper(url, df, kell, headless=True, interval_sec=60, iterations=
 async def main():
 
     URLS = [
-        'https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/anglia/premier-liga/bournemouth-everton/287619727821672448/all',
-        'https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/anglia/premier-liga/fulham-manchester-city/287619727689551872/all',
-        'https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/anglia/premier-liga/newcastle-tottenham/287619814704582656/all',
-        'https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/nemetorszag/nemet-kupa/hertha-bsc-kaiserslautern/286514603906863104/all',
-        'https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/argentina/argentin-bajnoksag/barracas-central-gimnasia-lp/287878306902347776/all',
-        'https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/chile/chilei-bajnoksag/universidad-de-chile-coquimbo-unido/287430018989330432/all',
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/portugalia/portugal-liga-kupa/porto-guimaraes/288411231423074304/all",
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/olaszorszag/olasz-kupa/lazio-milan/284304335955070976/all",
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/olaszorszag/olasz-kupa/bologna-parma/284304391892406272/all",
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/anglia/premier-liga/manchester-utd-west-ham/287620750930907136/all",
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/spanyolorszag/spanyol-kupa/tenerife-granada/288539689538064384/all",
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/belgium/belga-kupa/genk-anderlecht/288411155916165120/all",
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/spanyolorszag/spanyol-kupa/atl-baleares-espanyol/288530004705579008/all",
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/spanyolorszag/spanyol-kupa/ponferradina-r-santander/288533784607100928/all",
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/spanyolorszag/spanyol-kupa/cartagena-valencia/288537562290884608/all"
     ]
 
     df = pd.read_excel("../Book1.xlsx")
@@ -224,12 +233,21 @@ async def main():
     r = redis.Redis(host='localhost', port=6379)
     print('Sikeres csatlakotás a Redis adatbázishoz!')
 
-    tasks = [
-        run_scraper(url, df, headless=False, interval_sec=30, iterations=2, kell=kelllista, r=r)
-        for url in URLS
-    ]
-    await asyncio.gather(*tasks)
+    tasks = []
 
+    for i, url in enumerate(URLS):
+        # indítunk egy taskot
+        tasks.append(
+            asyncio.create_task(
+                run_scraper(url, df, headless=True, interval_sec=30, iterations=None, kell=kelllista, r=r)
+            )
+        )
+
+        # KIS SZÜNET a következő előtt, hogy ne egyszerre nyíljon az összes
+        print(f'{i + 1}. oldal indítása...')
+        await asyncio.sleep(5.0)
+
+    await asyncio.gather(*tasks)
     await r.aclose()
 
 

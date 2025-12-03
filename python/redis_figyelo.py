@@ -17,23 +17,30 @@ for message in pubsub.listen():
 
         kulcsok = [k.decode("utf-8") for k in r.keys()]
         pairs = get_parok(kulcsok)
-        print(pairs)
+        #print(pairs)
+
 
         for idk in pairs:
             # ha több mint 2 id van akkor azt még nem tudom kezelni
             if len(idk) > 2:
                 continue
 
+            print(idk)
+
             # lerkérem az id-hez tartozó értéket a redis servertől
             adatok = r.mget(idk)
+
+            #print(adatok)
 
             # az adatok string-ként jönnek listában ezt dekódolni kell
             adatok2 = [json.loads(a) for a in adatok]
 
             # print(idk)
-            print(adatok2)
+            #print(adatok2)
 
             # összehasonlítom az adatokat
             get_pos(*adatok2)
+
+        print()
 
 
