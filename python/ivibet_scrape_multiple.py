@@ -152,7 +152,7 @@ async def goto_ivibet(page, url):
 
 
 # ------------- ASYNC LOOP -------------
-async def run_scraper(url, df, kell, headless=True, interval_sec=60, iterations=None, parser_fn=parse_html, r=None):
+async def run_scraper(url, df, kell, r, headless=True, interval_sec=60, iterations=None, parser_fn=parse_html):
     """
     - Megnyitja a böngészőt és az oldalt
     - Ciklusban (percenként) lekéri az oldal tartalmát (nem tölti újra)
@@ -162,8 +162,8 @@ async def run_scraper(url, df, kell, headless=True, interval_sec=60, iterations=
     """
 
     # nyitok egy böngészőt
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=headless, slow_mo=500)
+    async with (async_playwright() as p):
+        browser = await p.chromium.launch(headless=headless)
         context = await browser.new_context(
             locale="hu-HU",
             user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -172,18 +172,42 @@ async def run_scraper(url, df, kell, headless=True, interval_sec=60, iterations=
         # nyitok egy oldalt
         page = await context.new_page()
 
-        
-        try:
+        # külső ciklus
 
-            await goto_ivibet(page, url)
-            print('Betöltött:', url)
+        # ez csak első nyitáskor és akkor fut le ha az oldal hibát adott
+        egymasutani_hibak = 0 # ha az egymás utáni hibák elérik az 5-öt kilép a worker
 
-            # a kulcsot csak egyszer kell lekérnem a legelején!
-            key = await get_key_from_page(page)
+        # tesztelék közben ezzel adjuk meg hányszor fusson le a scrape és lépjen ki
+        count = 0
 
-            # ciklus változók
-            elozoresult = None # le kéne kérdeznem a redis adatbázisból és azt iderakni ha nincsen csak akkor None
-            count = 0
+        while True:
+            try:
+                # ebben a try ágban tudok tesztelni minden hiba forrást:
+                # 1. megszünt a link, 2. nem tudok id-t generálni, 3. nem működik a redis adatbázis
+                await goto_ivibet(page, url)
+                key = await get_key_from_page(page)
+
+                print('Betöltött:', key)
+
+                # lekérem a key-hez tartozó előző redis mentést ha nincsen akkor None
+                raw = await r.get(key)
+                elozoresult = json.loads(raw) if raw else None
+
+                egymasutani_hibak = 0
+
+            except Exception as e:
+                egymasutani_hibak += 1
+
+                if egymasutani_hibak < 5:
+                    print('Nem tudok az oldalra navigálni, kulcsot olvasni, vagy adatbázhoz csatlakozni!')
+                    continue # következő fő ciklus kezdés, vissza az elejére
+                else:
+                    print('Egymásután 5x nem tudtam az oldalra navigálni, kulcsot olvasni, vagy adatbázhoz csatlakozni, LEÁLL A WOEKER!')
+                    # logolni kéne
+                    break # kilépek a fő ciklusből leáll a worker
+
+
+            # itt indul a valóban folyamatosan életbentartó ciklus
             while True:
                 try:
                     # ellenőrzöm, hogy az oldal be van-e még töltve (alkalmas-e a scrape-re)
@@ -208,14 +232,8 @@ async def run_scraper(url, df, kell, headless=True, interval_sec=60, iterations=
 
                 except Exception as e:
                     print(e)
-                    print('Hibát dobott a kiolvasás, elnavigálok újra az oldalra!')
-
-                    # ha nicsen betöltve az oldal újra elnavigálok oda
-                    await goto_ivibet(page, url)
-
-                    # újra kiolvasom a kulcsot
-                    key = await get_key_from_page(page)
-
+                    print('Hibát dobott a kiolvasás, újra kezdem a fő ciklust!')
+                    break # alciklus zárása vissza az előző ciklusba
 
                 count += 1
 
@@ -226,10 +244,15 @@ async def run_scraper(url, df, kell, headless=True, interval_sec=60, iterations=
                 # várakozás
                 await asyncio.sleep(interval_sec)
 
-        # lefut ha hibát dob a try vagy véget ér a try (vagyis mindig)
-        finally:
-            await context.close()
-            await browser.close()
+            # kilépek a külső ciklusból is
+            if iterations is not None and count >= iterations:
+                break
+
+        # ha kilépek a fő ciklusból akkor lefut
+        await context.close()
+        await browser.close()
+
+        # leáll a worker (remélem)
 
 
 
@@ -239,8 +262,8 @@ async def main():
 
         "https://ivi-bettx.net/hu/prematch/football/1080692-portugal-league-cup/8441754-porto-vitoria-guimaraes",
         "https://ivi-bettx.net/hu/prematch/football/1008161-olasz-kupa/7988434-lazio-rome-ac-milan",
-        #"https://ivi-bettx.net/hu/prematch/football/1008161-olasz-kupa/7988443-bologna-fc-parma-calcio",
-        #"https://ivi-bettx.net/hu/prematch/football/1008013-anglia-premier-league/8358497-manchester-united-west-ham-united",
+        "https://ivi-bettx.net/hu/prematch/football/1008161-olasz-kupa/7988443-bologna-fc-parma-calcio",
+        "https://ivi-bettx.net/hu/prematch/football/1008013-anglia-premier-league/8358497-manchester-united-west-ham-united",
         #"https://ivi-bettx.net/hu/prematch/football/1008162-copa-del-rey/8264565-tenerife-cd-granada-cf",
         #"https://ivi-bettx.net/hu/prematch/football/1076785-belgium-cup/8442060-genk-anderlecht",
         #"https://ivi-bettx.net/hu/prematch/football/1008162-copa-del-rey/8414256-cd-atletico-baleares-espanyol-barcelona",
