@@ -25,7 +25,7 @@ for message in pubsub.listen():
             if len(idk) > 2:
                 continue
 
-            print(idk)
+            #print(idk)
 
             # lerkérem az id-hez tartozó értéket a redis servertől
             adatok = r.mget(idk)
@@ -41,6 +41,6 @@ for message in pubsub.listen():
             # összehasonlítom az adatokat
             get_pos(*adatok2)
 
-        print()
+        #print()
 
 

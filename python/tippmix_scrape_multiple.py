@@ -149,7 +149,7 @@ def parse_html(html, df, kell=None):
 
 
 # ------------- ASYNC LOOP -------------
-async def run_scraper(url, df, kell, headless=True, interval_sec=60, iterations=None, parser_fn=parse_html, r=None):
+async def run_scraper(url, df, kell, r, headless=True, interval_sec=60, iterations=None, parser_fn=parse_html):
     """
     - Megnyitja a böngészőt és az oldalt
     - Ciklusban (percenként) lekéri az oldal tartalmát (nem tölti újra)
@@ -163,53 +163,91 @@ async def run_scraper(url, df, kell, headless=True, interval_sec=60, iterations=
         context = await browser.new_context()
         page = await context.new_page()
 
-        try:
-            # első betöltés
-            await page.goto(url, timeout=45000)
-            await page.wait_for_selector(".MarketGroupsItem", timeout=15000)
+        # külső ciklus
 
-            # ciklus változók
-            elozoresult = None
-            count = 0
+        # ez csak első nyitáskor és akkor fut le ha az oldal hibát adott
+        egymasutani_hibak = 0  # ha az egymás utáni hibák elérik az 5-öt kilép a worker
+
+        # tesztelék közben ezzel adjuk meg hányszor fusson le a scrape és lépjen ki
+        count = 0
+
+        while True:
+
+            try:
+                # ebben a try ágban tudok tesztelni minden hiba forrást:
+                # 1. megszünt a link, 2. nem tudok id-t generálni, 3. nem működik a redis adatbázis
+                await page.goto(url, timeout=45000)
+                await page.wait_for_selector(".MarketGroupsItem", timeout=15000)
+
+                # tudom dupla parser hívás így első futáskor, de a parser_fn sinkron csak így tudom hívni a szinkron get_key függvényt
+                html = await page.content()
+                key, _ = parser_fn(html, df, kell)
+
+                print('Betöltött:', key)
+
+                # lekérem a key-hez tartozó előző redis mentést ha nincsen akkor None
+                raw = await r.get(key)
+                elozoresult = json.loads(raw) if raw else None
+
+                egymasutani_hibak = 0
+
+            except Exception as e:
+                egymasutani_hibak += 1
+
+                if egymasutani_hibak < 5:
+                    print('Nem tudok az oldalra navigálni, kulcsot olvasni, vagy adatbázhoz csatlakozni!')
+                    continue # következő fő ciklus kezdés, vissza az elejére
+                else:
+                    print('Egymásután 5x nem tudtam az oldalra navigálni, kulcsot olvasni, vagy adatbázhoz csatlakozni, LEÁLL A WOEKER!')
+                    print(url)
+                    # logolni kéne
+                    break # kilépek a fő ciklusből leáll a worker
+
+
+            # itt indul a valóban folyamatosan életbentartó ciklus
             while True:
-
                 try:
                     # ellenőrzöm, hogy az oldal be van-e még töltve (alkalmas-e a scrape-re)
                     await page.wait_for_selector(".MarketGroupsItem", timeout=15000)
 
-                except Exception:
-                    # ha nicsen betöltve az oldal újra elnavigálok oda
-                    await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                    # HTML kiolvasása, majd átadjuk a SZINKRON parsernek
+                    html = await page.content()
+                    _, result = parser_fn(html, df, kell) # itt meg már nincsen szükség a key-re... de egy sinkron függvénybe lett megírva...
 
-                # HTML kiolvasása, majd átadjuk a SZINKRON parsernek
-                html = await page.content()
-                key, result = parser_fn(html, df, kell)
+                    print('Leolvasva:', key)
 
-                #print(key, result)
-                print('Leolvasva:', key)
+                    # REDIS RÉSZ
+                    if result != elozoresult:
+                        await r.set(key, json.dumps(result, ensure_ascii=False))
+                        await r.incr("lastupdate")
 
-                # REDIS RÉSZ
-                if result != elozoresult:
+                        print('Van változás az adatokban:', key)
 
-                    await r.set(key, json.dumps(result, ensure_ascii=False))
-                    new_v = await r.incr("lastupdate")
+                    elozoresult = result
 
-                    #print('Van változás az adatokban:', key, '\n', result, '\nVáltozás mentve az adatbázisba:', new_v, '\n')
-                    print('Van változás az adatokban:', key)
+                except Exception as e:
+                    print(e)
+                    print('Hibát dobott a kiolvasás, újra kezdem a fő ciklust!')
+                    break # alciklus zárása vissza az előző ciklusba
 
-                elozoresult = result
                 count += 1
 
                 # kilépés vezérlő
                 if iterations is not None and count >= iterations:
                     break
 
+                # várakozás
                 await asyncio.sleep(interval_sec)
 
-        # lefut ha hibát dob a try vagy véget ér a try (vagyis mindig)
-        finally:
-            await context.close()
-            await browser.close()
+            # kilépek a külső ciklusból is
+            if iterations is not None and count >= iterations:
+                break
+
+        # ha kilépek a fő ciklusból akkor lefut
+        await context.close()
+        await browser.close()
+
+        # leáll a worker
 
 
 
@@ -225,6 +263,14 @@ async def main():
         "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/spanyolorszag/spanyol-kupa/atl-baleares-espanyol/288530004705579008/all",
         "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/spanyolorszag/spanyol-kupa/ponferradina-r-santander/288533784607100928/all",
         "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/spanyolorszag/spanyol-kupa/cartagena-valencia/288537562290884608/all"
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/spanyolorszag/spanyol-bajnoksag/oviedo-mallorca/287684732965392384/all",
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/franciaorszag/francia-bajnoksag/brest-monaco/287691477014056960/all",
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/franciaorszag/francia-bajnoksag/lille-marseille/287691505043542016/all",
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/nemetorszag/bundesliga-1/mainz-monchengladbach/287682969856151552/all",
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/anglia/angol-liga-bajnoksag/hull-city-middlesbrough/288225599242407936/all",
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/torokorszag/torok-bajnoksag/galatasaray-samsunspor/288162798417252352/all",
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/nemetorszag/bundesliga-2/dusseldorf-schalke/287707697955246080/all",
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/nemetorszag/bundesliga-2/munster-hannover/287707697284157440/all"
     ]
 
     df = pd.read_excel("../Book1.xlsx")

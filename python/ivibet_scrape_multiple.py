@@ -203,6 +203,7 @@ async def run_scraper(url, df, kell, r, headless=True, interval_sec=60, iteratio
                     continue # következő fő ciklus kezdés, vissza az elejére
                 else:
                     print('Egymásután 5x nem tudtam az oldalra navigálni, kulcsot olvasni, vagy adatbázhoz csatlakozni, LEÁLL A WOEKER!')
+                    print(url)
                     # logolni kéne
                     break # kilépek a fő ciklusből leáll a worker
 
@@ -223,7 +224,7 @@ async def run_scraper(url, df, kell, r, headless=True, interval_sec=60, iteratio
                     # REDIS RÉSZ
                     if result != elozoresult:
                         await r.set(key, json.dumps(result, ensure_ascii=False))
-                        new_v = await r.incr("lastupdate")
+                        await r.incr("lastupdate")
 
                         print('Van változás az adatokban:', key)
 
@@ -259,16 +260,23 @@ async def run_scraper(url, df, kell, r, headless=True, interval_sec=60, iteratio
 async def main():
 
     URLS = [
-
         "https://ivi-bettx.net/hu/prematch/football/1080692-portugal-league-cup/8441754-porto-vitoria-guimaraes",
         "https://ivi-bettx.net/hu/prematch/football/1008161-olasz-kupa/7988434-lazio-rome-ac-milan",
         "https://ivi-bettx.net/hu/prematch/football/1008161-olasz-kupa/7988443-bologna-fc-parma-calcio",
         "https://ivi-bettx.net/hu/prematch/football/1008013-anglia-premier-league/8358497-manchester-united-west-ham-united",
-        #"https://ivi-bettx.net/hu/prematch/football/1008162-copa-del-rey/8264565-tenerife-cd-granada-cf",
-        #"https://ivi-bettx.net/hu/prematch/football/1076785-belgium-cup/8442060-genk-anderlecht",
-        #"https://ivi-bettx.net/hu/prematch/football/1008162-copa-del-rey/8414256-cd-atletico-baleares-espanyol-barcelona",
-        #"https://ivi-bettx.net/hu/prematch/football/1008162-copa-del-rey/8253013-sd-ponferradina-racing-santander",
-        #"https://ivi-bettx.net/hu/prematch/football/1008162-copa-del-rey/8253012-fc-cartagena-valencia-cf"
+        "https://ivi-bettx.net/hu/prematch/football/1008162-copa-del-rey/8264565-tenerife-cd-granada-cf",
+        "https://ivi-bettx.net/hu/prematch/football/1076785-belgium-cup/8442060-genk-anderlecht",
+        "https://ivi-bettx.net/hu/prematch/football/1008162-copa-del-rey/8414256-cd-atletico-baleares-espanyol-barcelona",
+        "https://ivi-bettx.net/hu/prematch/football/1008162-copa-del-rey/8253013-sd-ponferradina-racing-santander",
+        "https://ivi-bettx.net/hu/prematch/football/1008162-copa-del-rey/8253012-fc-cartagena-valencia-cf"
+        "https://ivi-bettx.net/hu/prematch/football/1008007-spanyolorszag-laliga/7658035-real-oviedo-rcd-mallorca",
+        "https://ivi-bettx.net/hu/prematch/football/1008026-franciaorszag-ligue-1/8072137-stade-brest-29-as-monaco",
+        "https://ivi-bettx.net/hu/prematch/football/1008026-franciaorszag-ligue-1/8072124-lille-osc-olympique-marseille",
+        "https://ivi-bettx.net/hu/prematch/football/1008027-nemetorszag-bundesliga/8203654-fsv-mainz-borussia-monchengladbach",
+        "https://ivi-bettx.net/hu/prematch/football/1008014-bajnoksag/8374139-hull-city-middlesbrough-fc",
+        "https://ivi-bettx.net/hu/prematch/football/1070407-turkey-superliga/8425679-galatasaray-samsunspor",
+        "https://ivi-bettx.net/hu/prematch/football/1008036-2-bundesliga/8203671-fortuna-dusseldorf-schalke-04",
+        "https://ivi-bettx.net/hu/prematch/football/1008036-2-bundesliga/8223273-sc-preussen-06-munster-hannover-96"
     ]
 
     df = pd.read_excel("../Book1.xlsx")
