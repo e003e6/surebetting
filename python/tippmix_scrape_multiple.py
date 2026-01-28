@@ -140,7 +140,7 @@ def parse_html(html, df, kell=None):
 
                         text, odds = [m.get_text(strip=True) for m in oszlop.find_all('span')]  # ['-3,5', '5,25']
 
-                        textt = f'{'1' if i == 0 else '2'}_{text}'
+                        textt = f"{'1' if i == 0 else '2'}_{text}"
                         soradatok[textt] = odds
 
         markets[header_text] = soradatok
@@ -254,26 +254,11 @@ async def run_scraper(url, df, kell, r, headless=True, interval_sec=60, iteratio
 async def main():
 
     URLS = [
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/portugalia/portugal-liga-kupa/porto-guimaraes/288411231423074304/all",
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/olaszorszag/olasz-kupa/lazio-milan/284304335955070976/all",
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/olaszorszag/olasz-kupa/bologna-parma/284304391892406272/all",
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/anglia/premier-liga/manchester-utd-west-ham/287620750930907136/all",
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/spanyolorszag/spanyol-kupa/tenerife-granada/288539689538064384/all",
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/belgium/belga-kupa/genk-anderlecht/288411155916165120/all",
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/spanyolorszag/spanyol-kupa/atl-baleares-espanyol/288530004705579008/all",
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/spanyolorszag/spanyol-kupa/ponferradina-r-santander/288533784607100928/all",
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/spanyolorszag/spanyol-kupa/cartagena-valencia/288537562290884608/all"
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/spanyolorszag/spanyol-bajnoksag/oviedo-mallorca/287684732965392384/all",
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/franciaorszag/francia-bajnoksag/brest-monaco/287691477014056960/all",
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/franciaorszag/francia-bajnoksag/lille-marseille/287691505043542016/all",
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/nemetorszag/bundesliga-1/mainz-monchengladbach/287682969856151552/all",
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/anglia/angol-liga-bajnoksag/hull-city-middlesbrough/288225599242407936/all",
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/torokorszag/torok-bajnoksag/galatasaray-samsunspor/288162798417252352/all",
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/nemetorszag/bundesliga-2/dusseldorf-schalke/287707697955246080/all",
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/nemetorszag/bundesliga-2/munster-hannover/287707697284157440/all"
+        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/europa/el-csoportkor/freiburg-maccabi-ta/289424141338316800/all"
+
     ]
 
-    df = pd.read_excel("../Book1.xlsx")
+    df = pd.read_excel("C:\surebetting\shurebetting\Book1.xlsx")
     kelllista = df[df['Unnamed: 0'] == 'tippmix'].values[0][1:].tolist()
 
     r = redis.Redis(host='localhost', port=6379)
