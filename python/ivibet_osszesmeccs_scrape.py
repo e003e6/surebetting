@@ -98,4 +98,5 @@ def scrape_event_links():
 if __name__ == "__main__":
     event_links = scrape_event_links()
     for link in event_links:
-        print("https://ivi-bettx.net" + link)
+        print(f"\"https://ivi-bettx.net{link}\",")
+

@@ -79,7 +79,7 @@ with sync_playwright() as p:
 
     # Eredmények kiírása
     for path in results:
-        egeszlink = ('https://sports2.tippmixpro.hu/' + path + '/all')
+        egeszlink = f"\"https://sports2.tippmixpro.hu/{path}/all\","
         print(egeszlink)
 
     browser.close()
