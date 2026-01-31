@@ -157,9 +157,24 @@ async def goto_ivibet(page, url):
     await page.wait_for_selector('[data-test="fullEventMarket"]', timeout=20000)
 ```
 
+**Bet365** - Hash-based SPA navigáció + Cloudflare challenge + stealth:
+```python
+async def goto_bet365(page, url):
+    # Először a főoldalt töltjük be (Cloudflare challenge kezelés)
+    await page.goto("https://www.bet365.com/", wait_until="domcontentloaded", timeout=60000)
+    await page.wait_for_timeout(5000)
+    # Hash váltás a meccs oldalra (#/AC/B1/...)
+    hash_part = url.split("#", 1)[1]
+    await page.evaluate(f'window.location.hash = "#{hash_part}"')
+    await page.wait_for_timeout(3000)
+    # Várunk a fixture title bar megjelenésére
+    await page.wait_for_function("""() => { ... }""", timeout=30000)
+```
+
 **Mikor melyik módszer kell:**
 - Ha a weboldal hagyományos szerver-renderelt → egyszerű `page.goto()`
 - Ha SPA (React, Vue, Angular) → SPA navigáció (pushState/popstate vagy router interakció)
+- Ha hash-based routing (#/...) → `window.location.hash` váltás
 - Jellemzők amik SPA-ra utalnak: egyetlen HTML skeleton, JS-ből renderelt tartalom, URL nem változik page reload nélkül
 
 ### 2.2 Kulcs generálás (`get_key`)
@@ -194,6 +209,22 @@ async def get_key_from_page(page):
     date_str = await page.text_content(date_selector)
     datum = dateparser.parse(date_str.strip(), languages=["hu"]).strftime("%Y-%m-%d")
     return f"{hazai}-{vendeg}-{datum}-ivibet"
+```
+
+**Bet365** - Async, Playwright JS eval-lal (SPA, fixture title bar):
+```python
+async def get_key_from_page(page):
+    # Fixture header-ből: "Home v Away" formátum
+    fixture_text = await page.evaluate("""() => {
+        const selectors = ['[class*="fixture-title"]', '[class*="FixtureTitle"]', ...];
+        for (const sel of selectors) { ... }
+        return document.title;  // fallback
+    }""")
+    teams = fixture_text.split(" v ")
+    hazai = normalize_team_id(teams[0])
+    vendeg = normalize_team_id(teams[1])
+    # Dátum hasonlóan JS eval-lal
+    return f"{hazai}-{vendeg}-{datum}-bet365"
 ```
 
 **Döntés:** Ha a HTML statikus és BS4-gyel olvasható → szinkron. Ha SPA és a DOM JS-ből épül → async Playwright eval.
@@ -325,6 +356,56 @@ Sokkal egyszerűbb mint a TippMix, mert az IViBet konzisztens `data-test` attrib
 3. Benne minden `sport-event-table-additional-market` = egy kimenet (`name` + `odd`)
 4. Nincsenek bonyolult beágyazott struktúrák
 
+#### Bet365 HTML struktúra
+
+A Bet365 obfuszkált CSS osztályneveket használ (pl. `gl-MarketGroup`, `rcl-MarketCoupon`, `sip-MarketCouponOdds`), amelyek frissítéskor változhatnak. Ezért partial match (`[class*="..."]` vagy `re.compile()`) selectorokat használunk.
+
+Speciális jellemzők:
+- **Tab-alapú navigáció**: A piacok tab-okba vannak rendezve, mindegyiket végig kell kattintani
+- **Összecsukható szekciók**: Egyes szekciók alapból össze vannak csukva, ki kell nyitni
+- **Angol nyelv**: Piacnevek és kimenetnevek angolul (`Match Result`, `Asian Handicap`, `Both Teams to Score`, stb.)
+
+```html
+<!-- Bet365 piac csoport (partial class nevek!) -->
+<div class="gl-MarketGroup ...">
+  <!-- Piac neve -->
+  <div class="gl-MarketGroupButton_Text ...">Asian Handicap</div>
+
+  <!-- Odds sorok -->
+  <div class="gl-Market_General ...">
+    <span class="gl-ParticipantCentered_Name ...">Team A (-0.25)</span>
+    <span class="gl-ParticipantCentered_Odds ...">1.85</span>
+  </div>
+  <div class="gl-Market_General ...">
+    <span class="gl-ParticipantCentered_Name ...">Team B (+0.25)</span>
+    <span class="gl-ParticipantCentered_Odds ...">2.05</span>
+  </div>
+</div>
+```
+
+**Bet365 CSS selectorok összefoglaló (partial match!):**
+
+| Cél                    | Selector pattern (regex)                        |
+|------------------------|-------------------------------------------------|
+| Piac csoport           | `gl-MarketGroup`, `src-MarketCouponFixturePod`  |
+| Piac neve              | `gl-MarketGroupButton_Text`                     |
+| Odds sor               | `gl-Market_General`, `gl-Participant`            |
+| Kimenet neve           | `gl-ParticipantCentered_Name`                   |
+| Odds érték             | `gl-ParticipantCentered_Odds`                   |
+| Fixture title (kulcs)  | `fixture-title`, `FixtureTitle`                 |
+| Dátum (kulcs)          | `fixture-information`, `FixtureInformation`     |
+| Tab gombok             | `gl-MarketGroupButton`, `cm-CouponMarketGroupButton` |
+
+**FONTOS:** Ezek a class nevek a DOM discovery során pontosítandók! A fenti nevek a bet365 ismert mintáiból származnak, de a pontos nevek csak futtatáskor derülnek ki.
+
+**Bet365 parser logika:**
+1. **Tab iteráció:** Végigkattintjuk az összes tabot (`click_all_tabs_and_collect`)
+2. **Section expansion:** Minden tab-nál kinyitjuk az összecsukott szekciókat (`expand_collapsed_sections`)
+3. **HTML gyűjtés:** Minden tab-ról lementjük a HTML-t (lista)
+4. **Piac parsing:** Partial match selectorokkal keressük a piac csoportokat
+5. **Odds kinyerés:** Name + odds párok gyűjtése minden piacból
+6. **Merge:** Ha ugyanaz a piac több tab-on is megjelenik, összefűzzük
+
 ### 2.4 Piac név egységesítő (`egysegesito_*`)
 
 **TippMix** (`egysegesito_tippmix`):
@@ -354,6 +435,23 @@ context = await browser.new_context(
 )
 ```
 
+**Bet365** - Anti-bot védelem (`playwright-stealth` + speciális launch args):
+```python
+from playwright_stealth import stealth_async
+
+browser = await p.chromium.launch(
+    headless=False,  # KÖTELEZŐ - bet365 detektálja a headless módot
+    args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+)
+context = await browser.new_context(
+    locale="en-GB",
+    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ...",
+    viewport={"width": 1920, "height": 1080},
+)
+page = await context.new_page()
+await stealth_async(page)  # Fingerprint elfedés
+```
+
 ### 2.6 Oldal betöltöttség ellenőrzés (belső ciklusban)
 
 A belső while ciklusban minden iterációnál ellenőrzi, hogy az oldal még működik-e:
@@ -367,6 +465,9 @@ await page.wait_for_selector(".MarketGroupsItem", timeout=15000)
 ```python
 await page.wait_for_selector('[data-test="fullEventMarket"]', timeout=20000)
 ```
+
+**Bet365:**
+A belső ciklusban `click_all_tabs_and_collect(page)` hívás a sima `page.content()` helyett - ez kezeli a tab navigációt és section expansion-t is.
 
 ---
 
@@ -484,7 +585,10 @@ A kulcsok a Book1.xlsx standard nevei. Az odds értékek float-ok. Ez a formátu
 - **Csapatnév eltérés:** Ha a két iroda eltérő nevet használ (pl. "Man City" vs "Manchester City"), a `seged.py` `TEAM_ALIASES` dict-be fel kell venni
 - **Odds formátum:** Egyesek vesszővel szeparálnak (1,85), mások ponttal (1.85) - az `egysegesito` függvényben kell kezelni
 - **SPA navigáció:** Ha az iroda SPA, a `page.goto()` nem elég, SPA-specifikus navigáció kell (pushState, router hook, stb.)
-- **Anti-bot:** Egyes irodák user-agent / locale / egyéb headerek alapján szűrnek → `browser.new_context()` paraméterezés
+- **Anti-bot:** Egyes irodák user-agent / locale / egyéb headerek alapján szűrnek → `browser.new_context()` paraméterezés. Bet365 esetén `playwright-stealth` és `headless=False` szükséges
+- **Obfuszkált CSS nevek (Bet365):** A class nevek tartalmaznak változó prefixeket → partial match (`[class*="..."]` vagy `re.compile()`) használata
+- **Tab-alapú piacok (Bet365):** A piacok tab-okba vannak rendezve, mindegyiket végig kell kattintani → `click_all_tabs_and_collect()`
+- **Összecsukható szekciók (Bet365):** Egyes szekciók alapból csukva → `expand_collapsed_sections()`
 - **Dinamikus DOM:** SPA-knál a DOM JS-ből épül → `wait_for_selector` / `wait_for_function` szükséges az adatok megjelenésére várni
 - **Hendikep csapatnév hozzárendelés:** Az IViBet-nél a hendikep kimenetekhez az 1X2 piacból kell azonosítani melyik csapat az "1" és melyik a "2"
 

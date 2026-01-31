@@ -57,6 +57,23 @@ TEAM_ALIASES = {
     "karlsruher": "karlsruhe",
     "saint etienne": "etienne",
     "st etienne": "etienne",
+    # bet365 angol nevek
+    "wolves": "wolverhampton",
+    "wolverhampton wanderers": "wolverhampton",
+    "spurs": "tottenham",
+    "tottenham hotspur": "tottenham",
+    "nottingham forest": "nottingham",
+    "nott'm forest": "nottingham",
+    "brighton and hove": "brighton",
+    "brighton hove": "brighton",
+    "sheffield utd": "sheffield",
+    "sheffield united": "sheffield",
+    "newcastle united": "newcastle",
+    "leicester city": "leicester",
+    "leeds united": "leeds",
+    "aston villa": "villa",
+    "west brom": "westbrom",
+    "west bromwich": "westbrom",
 }
 
 
