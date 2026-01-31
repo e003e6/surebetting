@@ -23,18 +23,40 @@ def norm(s):
 
 
 GENERIC_TOKENS = {
+    # klub utótagok
     "fc", "cf", "cd", "afc", "sc", "sv", "tsv", "psv",
-    "bc", "bk", "if", "fk", "nk", "club", "clube", "united", "city", "town",
-    # ligás/országos jelzők, amiket gyakran lehagynak:
-    "deportivo", "sporting",
-    # konkrétan a példád miatt:
-    "preussen",
-    # saját
-    'sp', 'ac'
+    "bc", "bk", "if", "fk", "nk", "club", "clube",
+    "united", "city", "town",
+    # futball-specifikus zajszavak (ezeket az irodák hol használják, hol nem)
+    "foot", "hotspur", "wanderers", "rovers", "albion",
+    "rangers", "forest", "athletic", "atletico",
+    "olympique", "olimpique", "dynamo", "dinamo",
+    "real", "racing", "borussia",
+    "deportivo", "sporting", "preussen",
+    "sp", "ac", "as", "us", "ss",
 }
 
 STOPWORDS = {
-    "de", "da", "do", "del", "la", "el",
+    "de", "da", "do", "del", "la", "el", "al", "los", "las", "le", "les",
+}
+
+# Olyan csapatok, ahol a város név önmagában nem egyértelmű,
+# vagy a két iroda teljesen más nevet használ.
+# A kulcs a tisztított szövegben (ékezet nélkül, kisbetű) keresendő substring.
+# Hosszabb kulcsok előbb vizsgálandók (sorted by len desc).
+TEAM_ALIASES = {
+    "manchester city": "mancity",
+    "manchester united": "manutd",
+    "man city": "mancity",
+    "man united": "manutd",
+    "west ham": "westham",
+    "crystal palace": "crystalpalace",
+    "inter milan": "intermilan",
+    "atletico madrid": "atleticomadrid",
+    "real madrid": "realmadrid",
+    "karlsruher": "karlsruhe",
+    "saint etienne": "etienne",
+    "st etienne": "etienne",
 }
 
 
@@ -46,42 +68,39 @@ def strip_accents(text) -> str:
 
 def normalize_team_id(name: str) -> str:
     """
-    Csapatnévből ID-t készít, csak a 'city' token alapján.
-    Az azonos csapatnév-variánsok azonos ID-t kapjanak.
+    Csapatnévből egységes ID-t készít.
+    1. Alias ellenőrzés (Manchester City/United, West Ham, stb.)
+    2. Generic tokenek szűrése
+    3. Az ELSŐ megmaradt token a csapat ID-ja (város név, ami stabil mindkét irodában)
     """
     if not name:
         return ""
 
-    # 1) ékezetek, kisbetű
+    # 1) ékezetek, kisbetű, tisztítás
     text = strip_accents(name).lower()
-
-    # 2) minden nem betű/szám → szóköz
     text = re.sub(r"[^a-z0-9]+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
 
     if not text:
         return ""
 
+    # 2) alias ellenőrzés (hosszabb kulcs előbb, hogy ne legyen részleges match)
+    for alias_key in sorted(TEAM_ALIASES, key=len, reverse=True):
+        if alias_key in text:
+            return TEAM_ALIASES[alias_key]
+
     tokens = text.split()
 
     # 3) numerikus + generikus + stopword tokenek kidobása
-    clean_tokens = []
-    for tok in tokens:
-        if tok.isdigit():
-            continue
-        if tok in GENERIC_TOKENS:
-            continue
-        if tok in STOPWORDS:
-            continue
-        clean_tokens.append(tok)
+    clean_tokens = [
+        tok for tok in tokens
+        if not tok.isdigit() and tok not in GENERIC_TOKENS and tok not in STOPWORDS
+    ]
 
-    # ha minden kiesett, essünk vissza az eredeti tokenekre
+    # 4) ELSŐ megmaradt token (város név, ami mindkét irodában azonos)
     if clean_tokens:
-        city_token = clean_tokens[-1]
-    else:
-        city_token = tokens[-1]
-
-    return city_token
+        return clean_tokens[0]
+    return tokens[0]
 
 
 

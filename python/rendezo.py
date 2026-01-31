@@ -39,18 +39,13 @@ def parositas(d1, d2):
         return f"{other_side}_{other_sign}{num}"
     
     pairs = []
-    
-    # d1 és d2 a két szótár
+
+    # d1 és d2 a két szótár (csak d1-ből indulunk, így nem lesz dupla pár)
     for k in d1:
         pk = pair_key(k)
         if pk in d2:
             pairs.append((k, pk, d1[k], d2[pk]))
-    
-    for k in d2:
-        pk = pair_key(k)
-        if pk in d1:
-            pairs.append((pk, k, d1[pk], d2[k]))
-    
+
     return pairs
 
 
@@ -85,22 +80,26 @@ def get_pos(iroda_1_data: dict, iroda_2_data: dict, toke=100_000, ksz=-2):
         elif kulcs in ['vegkimenetel']:
             pass
 
-        # minden más
+        # minden más (bináris piacok: igen/nem, alatt/felett, stb.)
         else:
             a = iroda_1_data[kulcs]
             b = iroda_2_data[kulcs]
 
-            keys = list(a.keys())          # ['igen', 'nem']
-            k1, k2 = keys[0], keys[1]
+            if len(a) < 2 or len(b) < 2:
+                continue
 
-            if van_arb(a[k1], b[k2]):
-                print(kulcs)
-                print(a[k1], b[k2])
-                calc_arb(a[k1], b[k2], toke, ksz=ksz)
-            
-            if van_arb(a[k2], b[k1]):
-                print(kulcs)
-                print(a[k2], b[k1])
-                calc_arb(a[k2], b[k1], toke, ksz=ksz)
+            # név alapú párosítás: a közös kulcsokat keresztezzük
+            a_keys = list(a.keys())
+            b_keys = list(b.keys())
+
+            for ka in a_keys:
+                for kb in b_keys:
+                    if ka == kb:
+                        continue
+                    if van_arb(a[ka], b[kb]):
+                        print(kulcs)
+                        print(ka, kb)
+                        print(a[ka], b[kb])
+                        calc_arb(a[ka], b[kb], toke, ksz=ksz)
 
 

@@ -258,7 +258,7 @@ async def main():
 
     ]
 
-    df = pd.read_excel("C:\surebetting\shurebetting\Book1.xlsx")
+    df = pd.read_excel(r"C:\surebetting\shurebetting\Book1.xlsx")
     kelllista = df[df['Unnamed: 0'] == 'tippmix'].values[0][1:].tolist()
 
     r = redis.Redis(host='localhost', port=6379)

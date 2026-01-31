@@ -7,7 +7,7 @@ from contextlib import redirect_stdout
 from rendezo import get_pos, get_parok
 
 BOT_TOKEN = "8253461248:AAGfkxHcIHdnA_2uI2EdbixYE1dZSl16kQs"   # ide AZ ÚJ tokened (regenerált) kerüljön
-CHAT_ID = "	-5203661848"     # ide a saját chat id-d
+CHAT_ID = "-5203661848"     # ide a saját chat id-d
 
 r = redis.Redis(host="localhost", port=6379)
 

@@ -12,10 +12,6 @@ import pandas as pd
 from seged import *
 
 
-def norm(s):
-    return re.sub(r"\s+", " ", (s or "")).strip()
-
-
 async def get_key_from_page(page):
 
     team_selector = '[data-test="teamSeoTitles"] [data-test="teamName"] span'
@@ -60,13 +56,16 @@ def egysegesito_ivibet(data, df, kelllista):
     adatok = {}
     cimek = None
 
+    # Először kikeressük az 1X2 piacot a csapatnevek megállapításához
+    for m in data:
+        if m['market'] == '1X2' and len(m['outcomes']) >= 3:
+            cimek = {'1': m['outcomes'][0]['name'], 'x': m['outcomes'][1]['name'], '2': m['outcomes'][2]['name']}
+            break
+
     for m in data:
 
         if m['market'] not in kelllista:
             continue
-
-        if m['market'] == '1X2':
-            cimek = {'1': m['outcomes'][0]['name'], 'x': m['outcomes'][1]['name'], '2': m['outcomes'][2]['name']}
 
         stndmarket = df.columns[df.loc[df['Unnamed: 0'] == 'ivibet'].iloc[0] == m['market']].tolist()[0]
 
@@ -74,7 +73,8 @@ def egysegesito_ivibet(data, df, kelllista):
         for o in m['outcomes']:
 
             if m['market'] in ['Hendikep', 'ázsiai hendikep']:
-                # name = re.search(r'\(([^)]+)\)', o['name']).group(1)
+                if cimek is None:
+                    continue
                 name = o['name']
                 name = next(k for k, v in cimek.items() if v in o['name']) + "_" + o['name'].split("(")[1].rstrip(")")
 
@@ -264,7 +264,7 @@ async def main():
         
     ]
 
-    df = pd.read_excel("C:\surebetting\shurebetting\Book1.xlsx")
+    df = pd.read_excel(r"C:\surebetting\shurebetting\Book1.xlsx")
     kelllista = df[df['Unnamed: 0'] == 'ivibet'].values[0][1:].tolist()
 
     r = redis.Redis(host='localhost', port=6379)
