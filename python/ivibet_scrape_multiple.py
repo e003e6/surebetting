@@ -10,6 +10,7 @@ import dateparser
 import pandas as pd
 
 from seged import *
+from ivibet_osszesmeccs_scrape import scrape_event_links
 
 
 async def get_key_from_page(page):
@@ -257,12 +258,7 @@ async def run_scraper(url, df, kell, r, headless=True, interval_sec=60, iteratio
 
 
 
-async def main():
-
-    URLS = [
-        "https://ivi-bettx.net/hu/prematch/football/1008283-uefa-europa-league/8573977-sc-freiburg-maccabi-tel-aviv-fc"
-        
-    ]
+async def main(URLS):
 
     df = pd.read_excel(r"C:\surebetting\shurebetting\Book1.xlsx")
     kelllista = df[df['Unnamed: 0'] == 'ivibet'].values[0][1:].tolist()
@@ -291,4 +287,5 @@ async def main():
 
 # ====== Példa futtatás ======
 if __name__ == "__main__":
-    asyncio.run(main())
+    urls = [f"https://ivi-bettx.net{link}" for link in scrape_event_links()]
+    asyncio.run(main(urls))

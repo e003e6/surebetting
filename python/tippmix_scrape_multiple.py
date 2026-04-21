@@ -254,8 +254,6 @@ async def run_scraper(url, df, kell, r, headless=True, interval_sec=60, iteratio
 async def main():
 
     URLS = [
-        "https://sports2.tippmixpro.hu/hu/esemenyek/1/labdarugas/europa/el-csoportkor/freiburg-maccabi-ta/289424141338316800/all"
-
     ]
 
     df = pd.read_excel(r"C:\surebetting\shurebetting\Book1.xlsx")
