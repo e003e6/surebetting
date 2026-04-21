@@ -10,6 +10,7 @@ import dateparser
 import pandas as pd
 
 from seged import *
+from tippmix_osszesmeccs_scrape import scrape_event_links
 
 
 def get_key(soup):
@@ -251,10 +252,7 @@ async def run_scraper(url, df, kell, r, headless=True, interval_sec=60, iteratio
 
 
 
-async def main():
-
-    URLS = [
-    ]
+async def main(URLS):
 
     df = pd.read_excel(r"C:\surebetting\shurebetting\Book1.xlsx")
     kelllista = df[df['Unnamed: 0'] == 'tippmix'].values[0][1:].tolist()
@@ -282,4 +280,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    urls = scrape_event_links()
+    asyncio.run(main(urls))
