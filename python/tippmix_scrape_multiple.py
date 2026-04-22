@@ -13,6 +13,57 @@ from seged import *
 from tippmix_osszesmeccs_scrape import scrape_event_links
 
 
+# Gyorsabb HTML parser, ha van lxml telepítve; különben fallback a beépítettre.
+try:
+    import lxml  # noqa: F401
+    _BS_PARSER = "lxml"
+except ImportError:
+    _BS_PARSER = "html.parser"
+
+
+# A scrape-hez felesleges, CPU/RAM-et zabáló erőforrások blokkolása a böngészőben.
+_BLOCKED_RESOURCE_TYPES = {"image", "media", "font"}
+_BLOCKED_URL_PARTS = (
+    "google-analytics", "googletagmanager", "doubleclick", "facebook.net",
+    "hotjar", "sentry", "adservice", "cdn-analytics",
+)
+
+
+async def _block_heavy_resources(route):
+    req = route.request
+    if req.resource_type in _BLOCKED_RESOURCE_TYPES:
+        await route.abort()
+        return
+    url = req.url
+    if any(part in url for part in _BLOCKED_URL_PARTS):
+        await route.abort()
+        return
+    await route.continue_()
+
+
+# Piac-név mapping cache id(df) alapján, hogy ne számoljuk újra minden parse-nál.
+_market_map_cache = {}
+
+
+def _get_market_map(df):
+    key = id(df)
+    cached = _market_map_cache.get(key)
+    if cached is not None:
+        return cached
+    row = df.loc[df['Unnamed: 0'] == 'tippmix'].iloc[0]
+    mapping = {}
+    for std_name, tippmix_name in row.items():
+        if std_name == 'Unnamed: 0':
+            continue
+        if tippmix_name is None:
+            continue
+        if isinstance(tippmix_name, float) and pd.isna(tippmix_name):
+            continue
+        mapping[tippmix_name] = std_name
+    _market_map_cache[key] = mapping
+    return mapping
+
+
 def get_key(soup):
     h = soup.select_one('.MatchDetailsHeader__PartName--Home').get_text()
     v = soup.select_one('.MatchDetailsHeader__PartName--Away').get_text()
@@ -27,9 +78,10 @@ def get_key(soup):
 
 
 def egysegesito_tippmix(m, df):
+    market_map = _get_market_map(df)
     adatok = {}
     for k, v in m.items():
-        market = df.columns[df.loc[df['Unnamed: 0'] == 'tippmix'].iloc[0] == k].tolist()[0]
+        market = market_map[k]
 
         oddadatok = {}
 
@@ -55,7 +107,7 @@ def egysegesito_tippmix(m, df):
 def parse_html(html, df, kell=None):
     # Szinkron feldolgozás. Adatkinyerés
 
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(html, _BS_PARSER)
 
     markets = {}
 
@@ -65,8 +117,13 @@ def parse_html(html, df, kell=None):
         # nincs fő konténer -> üres eredmény
         return markets
 
+    # Nem mutáljuk a hívótól kapott listát (eredetileg minden parse-nál appendelt).
+    # A set gyorsabb 'in' vizsgálatot is ad.
     if kell:
-        kell.append('Gólszám - Rendes játékidő')
+        kell_local = set(kell)
+        kell_local.add('Gólszám - Rendes játékidő')
+    else:
+        kell_local = None
 
     for article in container.select("article"):
 
@@ -75,8 +132,8 @@ def parse_html(html, df, kell=None):
         header_el = article.select_one(".Market__CollapseText")
         header_text = header_el.get_text(strip=True) if header_el else ""
 
-        if kell:  # ha van kell lista akkor,
-            if header_text not in kell:  # ha nincsen benne a text akkor ki kell hagyni
+        if kell_local is not None:  # ha van kell lista akkor,
+            if header_text not in kell_local:  # ha nincsen benne a text akkor ki kell hagyni
                 continue
 
         oddsgroup = article.select("ul.Market__OddsGroups")  # li elemek listája ezen az ul tag-en belül
@@ -150,20 +207,22 @@ def parse_html(html, df, kell=None):
 
 
 # ------------- ASYNC LOOP -------------
-async def run_scraper(url, df, kell, r, headless=True, interval_sec=60, iterations=None, parser_fn=parse_html):
+async def run_scraper(url, df, kell, r, browser, nav_semaphore, interval_sec=60, iterations=None, parser_fn=parse_html):
     """
-    - Megnyitja a böngészőt és az oldalt
+    - A megosztott böngészőben nyit új context+page-t az oldalhoz
     - Ciklusban (percenként) lekéri az oldal tartalmát (nem tölti újra)
-    - A HTML-t átadja egy SZINKRON parser_fn-nek
-    - Ha adsz on_result callbacket (szinkron), annak átadja az eredményt
+    - A HTML parsolást threadpoolba helyezi, hogy ne blokkolja az event loopot
     - iterations: ha None -> végtelen ciklus, ha szám -> ennyiszer fut
+    - nav_semaphore: korlátozza az egyidejű page.goto() hívások számát,
+      hogy ne essen szét a böngésző sok párhuzamos betöltéstől.
     """
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=headless)
-        context = await browser.new_context()
-        page = await context.new_page()
+    context = await browser.new_context()
+    # Felesleges erőforrások blokkolása -> jelentős CPU/RAM csökkenés
+    await context.route("**/*", _block_heavy_resources)
+    page = await context.new_page()
 
+    try:
         # külső ciklus
 
         # ez csak első nyitáskor és akkor fut le ha az oldal hibát adott
@@ -177,12 +236,15 @@ async def run_scraper(url, df, kell, r, headless=True, interval_sec=60, iteratio
             try:
                 # ebben a try ágban tudok tesztelni minden hiba forrást:
                 # 1. megszünt a link, 2. nem tudok id-t generálni, 3. nem működik a redis adatbázis
-                await page.goto(url, timeout=45000)
-                await page.wait_for_selector(".MarketGroupsItem", timeout=15000)
+                # Semaphore: egyszerre csak korlátozott számú task tölthet be oldalt,
+                # így a böngésző nem fullad ki a párhuzamos goto-któl.
+                async with nav_semaphore:
+                    await page.goto(url, timeout=60000)
+                    await page.wait_for_selector(".MarketGroupsItem", timeout=20000)
 
                 # tudom dupla parser hívás így első futáskor, de a parser_fn sinkron csak így tudom hívni a szinkron get_key függvényt
                 html = await page.content()
-                key, _ = parser_fn(html, df, kell)
+                key, _ = await asyncio.to_thread(parser_fn, html, df, kell)
 
                 print('Betöltött:', key)
 
@@ -196,10 +258,12 @@ async def run_scraper(url, df, kell, r, headless=True, interval_sec=60, iteratio
                 egymasutani_hibak += 1
 
                 if egymasutani_hibak < 5:
-                    print('Nem tudok az oldalra navigálni, kulcsot olvasni, vagy adatbázhoz csatlakozni!')
+                    print(f'Nem tudok az oldalra navigálni ({egymasutani_hibak}/5): {type(e).__name__}: {e} | {url}')
+                    # várunk kicsit mielőtt újrapróbálnánk, hogy ne hajtsuk agyon a böngészőt
+                    await asyncio.sleep(10)
                     continue # következő fő ciklus kezdés, vissza az elejére
                 else:
-                    print('Egymásután 5x nem tudtam az oldalra navigálni, kulcsot olvasni, vagy adatbázhoz csatlakozni, LEÁLL A WOEKER!')
+                    print('Egymásután 5x nem tudtam az oldalra navigálni, kulcsot olvasni, vagy adatbázhoz csatlakozni, LEÁLL A WORKER!')
                     print(url)
                     # logolni kéne
                     break # kilépek a fő ciklusből leáll a worker
@@ -211,9 +275,9 @@ async def run_scraper(url, df, kell, r, headless=True, interval_sec=60, iteratio
                     # ellenőrzöm, hogy az oldal be van-e még töltve (alkalmas-e a scrape-re)
                     await page.wait_for_selector(".MarketGroupsItem", timeout=15000)
 
-                    # HTML kiolvasása, majd átadjuk a SZINKRON parsernek
+                    # HTML kiolvasása, majd átadjuk a SZINKRON parsernek egy threadben
                     html = await page.content()
-                    _, result = parser_fn(html, df, kell) # itt meg már nincsen szükség a key-re... de egy sinkron függvénybe lett megírva...
+                    _, result = await asyncio.to_thread(parser_fn, html, df, kell)
 
                     print('Leolvasva:', key)
 
@@ -244,9 +308,9 @@ async def run_scraper(url, df, kell, r, headless=True, interval_sec=60, iteratio
             if iterations is not None and count >= iterations:
                 break
 
+    finally:
         # ha kilépek a fő ciklusból akkor lefut
         await context.close()
-        await browser.close()
 
         # leáll a worker
 
@@ -256,25 +320,40 @@ async def main(URLS):
 
     df = pd.read_excel(r"C:\surebetting\shurebetting\Book1.xlsx")
     kelllista = df[df['Unnamed: 0'] == 'tippmix'].values[0][1:].tolist()
+    # Előre építjük a piac-név mappet, hogy az első parse már a cache-ből dolgozzon.
+    _get_market_map(df)
 
     r = redis.Redis(host='localhost', port=6379)
     print('Sikeres csatlakotás a Redis adatbázishoz!')
 
-    tasks = []
+    # EGY böngésző indul az összes taskhoz -> drasztikusan kevesebb CPU/RAM.
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
 
-    for i, url in enumerate(URLS):
-        # indítunk egy taskot
-        tasks.append(
-            asyncio.create_task(
-                run_scraper(url, df, headless=True, interval_sec=30, iterations=None, kell=kelllista, r=r)
+        # Korlátozzuk az egyidejű page.goto() hívásokat, hogy ne fulladjon ki
+        # a böngésző a sok párhuzamos betöltéstől. Állítsd ezt 3-8 közé
+        # a géped teljesítményétől függően.
+        nav_semaphore = asyncio.Semaphore(5)
+
+        tasks = []
+
+        for i, url in enumerate(URLS):
+            # indítunk egy taskot
+            tasks.append(
+                asyncio.create_task(
+                    run_scraper(url, df, kell=kelllista, r=r, browser=browser,
+                                nav_semaphore=nav_semaphore,
+                                interval_sec=30, iterations=None)
+                )
             )
-        )
 
-        # KIS SZÜNET a következő előtt, hogy ne egyszerre nyíljon az összes
-        print(f'{i + 1}. oldal indítása...')
-        await asyncio.sleep(5.0)
+            # KIS SZÜNET a következő előtt, hogy ne egyszerre nyíljon az összes
+            print(f'{i + 1}. oldal indítása...')
+            await asyncio.sleep(1.0)
 
-    await asyncio.gather(*tasks)
+        await asyncio.gather(*tasks)
+        await browser.close()
+
     await r.aclose()
 
 

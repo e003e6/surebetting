@@ -1,7 +1,7 @@
 import asyncio
 
 from playwright.async_api import async_playwright
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, SoupStrainer
 import redis.asyncio as redis
 
 import json
@@ -11,6 +11,26 @@ import pandas as pd
 
 from seged import *
 from ivibet_osszesmeccs_scrape import scrape_event_links
+
+
+# Csak a fullEventMarket blokkokat parsolja a BS4 (teljes DOM helyett -> kevesebb CPU)
+_MARKET_STRAINER = SoupStrainer(attrs={"data-test": "fullEventMarket"})
+
+# Erőforrás típusok, amiket NEM töltünk le (sávszél + CPU spórolás)
+_BLOCKED_RESOURCE_TYPES = {"image", "media", "font"}
+
+
+def build_market_map(df):
+    """ivibet piacnév -> standard piacnév dict. Egyszer építjük, sokszor használjuk."""
+    row = df.loc[df['Unnamed: 0'] == 'ivibet'].iloc[0]
+    return {row[col]: col for col in df.columns[1:] if pd.notna(row[col])}
+
+
+async def _route_handler(route):
+    if route.request.resource_type in _BLOCKED_RESOURCE_TYPES:
+        await route.abort()
+    else:
+        await route.continue_()
 
 
 async def get_key_from_page(page):
@@ -25,7 +45,7 @@ async def get_key_from_page(page):
             if (els.length < 2) return false;
             return Array.from(els).every(e => e.textContent && e.textContent.trim().length > 0);
         }""",
-        arg='[data-test="teamSeoTitles"] [data-test="teamName"] span',
+        arg=team_selector,
         timeout=10_000
     )
 
@@ -53,7 +73,7 @@ async def get_key_from_page(page):
 
 
 
-def egysegesito_ivibet(data, df, kelllista):
+def egysegesito_ivibet(data, market_map):
     adatok = {}
     cimek = None
 
@@ -65,18 +85,16 @@ def egysegesito_ivibet(data, df, kelllista):
 
     for m in data:
 
-        if m['market'] not in kelllista:
+        stndmarket = market_map.get(m['market'])
+        if stndmarket is None:
             continue
-
-        stndmarket = df.columns[df.loc[df['Unnamed: 0'] == 'ivibet'].iloc[0] == m['market']].tolist()[0]
 
         oddsok = {}
         for o in m['outcomes']:
 
-            if m['market'] in ['Hendikep', 'ázsiai hendikep']:
+            if m['market'] in ('Hendikep', 'ázsiai hendikep'):
                 if cimek is None:
                     continue
-                name = o['name']
                 name = next(k for k, v in cimek.items() if v in o['name']) + "_" + o['name'].split("(")[1].rstrip(")")
 
             else:
@@ -91,10 +109,10 @@ def egysegesito_ivibet(data, df, kelllista):
 
 
 
-def parse_html(html, df, kelllista):
-    # Szinkron feldolgozás. Adatkinyerés
-
-    soup = BeautifulSoup(html, "html.parser")
+def parse_html(html, market_map):
+    # Szinkron feldolgozás. Adatkinyerés.
+    # SoupStrainer: csak a fullEventMarket blokkokat parsolja a BS4 -> sokkal kevesebb munka
+    soup = BeautifulSoup(html, "html.parser", parse_only=_MARKET_STRAINER)
 
 
     results = [] # piacok
@@ -103,6 +121,10 @@ def parse_html(html, df, kelllista):
         # cím
         header_el = market.select_one('[data-test="sport-event-table-market-header"]')
         header_text = norm(header_el.get_text()) if header_el else norm(market.get_text()).split("\n")[0]
+
+        # Korai kihagyás: ha nem kell és nem 1X2 (cimek miatt), ne parsoljuk a sorokat
+        if header_text != '1X2' and header_text not in market_map:
+            continue
 
         # sorok / kimenetek
         outcomes = []
@@ -118,7 +140,7 @@ def parse_html(html, df, kelllista):
         if header_text and outcomes:
             results.append({"market": header_text, "outcomes": outcomes})
 
-    return egysegesito_ivibet(results, df, kelllista)
+    return egysegesito_ivibet(results, market_map)
 
 
 
@@ -153,134 +175,140 @@ async def goto_ivibet(page, url):
 
 
 # ------------- ASYNC LOOP -------------
-async def run_scraper(url, df, kell, r, headless=True, interval_sec=60, iterations=None, parser_fn=parse_html):
+async def run_scraper(page, url, market_map, r, interval_sec=60, iterations=None, parser_fn=parse_html):
     """
-    - Megnyitja a böngészőt és az oldalt
+    - Egy meglévő Playwright page-en dolgozik (a böngésző/context közös)
     - Ciklusban (percenként) lekéri az oldal tartalmát (nem tölti újra)
     - A HTML-t átadja egy SZINKRON parser_fn-nek
-    - Ha adsz on_result callbacket (szinkron), annak átadja az eredményt
     - iterations: ha None -> végtelen ciklus, ha szám -> ennyiszer fut
     """
 
-    # nyitok egy böngészőt
-    async with (async_playwright() as p):
-        browser = await p.chromium.launch(headless=headless)
-        context = await browser.new_context(
-            locale="hu-HU",
-            user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                        "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"),
-        )
-        # nyitok egy oldalt
-        page = await context.new_page()
+    # külső ciklus
 
-        # külső ciklus
+    # ez csak első nyitáskor és akkor fut le ha az oldal hibát adott
+    egymasutani_hibak = 0 # ha az egymás utáni hibák elérik az 5-öt kilép a worker
 
-        # ez csak első nyitáskor és akkor fut le ha az oldal hibát adott
-        egymasutani_hibak = 0 # ha az egymás utáni hibák elérik az 5-öt kilép a worker
+    # tesztelék közben ezzel adjuk meg hányszor fusson le a scrape és lépjen ki
+    count = 0
 
-        # tesztelék közben ezzel adjuk meg hányszor fusson le a scrape és lépjen ki
-        count = 0
+    while True:
+        try:
+            # ebben a try ágban tudok tesztelni minden hiba forrást:
+            # 1. megszünt a link, 2. nem tudok id-t generálni, 3. nem működik a redis adatbázis
+            await goto_ivibet(page, url)
+            key = await get_key_from_page(page)
 
+            print('Betöltött:', key)
+
+            # lekérem a key-hez tartozó előző redis mentést ha nincsen akkor None
+            raw = await r.get(key)
+            elozoresult = json.loads(raw) if raw else None
+
+            egymasutani_hibak = 0
+
+        except Exception as e:
+            egymasutani_hibak += 1
+
+            if egymasutani_hibak < 5:
+                print('Nem tudok az oldalra navigálni, kulcsot olvasni, vagy adatbázhoz csatlakozni!')
+                continue # következő fő ciklus kezdés, vissza az elejére
+            else:
+                print('Egymásután 5x nem tudtam az oldalra navigálni, kulcsot olvasni, vagy adatbázhoz csatlakozni, LEÁLL A WOEKER!')
+                print(url)
+                # logolni kéne
+                break # kilépek a fő ciklusből leáll a worker
+
+
+        # itt indul a valóban folyamatosan életbentartó ciklus
         while True:
             try:
-                # ebben a try ágban tudok tesztelni minden hiba forrást:
-                # 1. megszünt a link, 2. nem tudok id-t generálni, 3. nem működik a redis adatbázis
-                await goto_ivibet(page, url)
-                key = await get_key_from_page(page)
+                # ellenőrzöm, hogy az oldal be van-e még töltve (alkalmas-e a scrape-re)
+                await page.wait_for_selector('[data-test="fullEventMarket"]', timeout=20000)
 
-                print('Betöltött:', key)
+                # HTML kiolvasása, majd átadjuk a SZINKRON parsernek
+                html = await page.content()
+                result = parser_fn(html, market_map)
 
-                # lekérem a key-hez tartozó előző redis mentést ha nincsen akkor None
-                raw = await r.get(key)
-                elozoresult = json.loads(raw) if raw else None
+                # print(key, result)
+                print('Leolvasva:', key)
 
-                egymasutani_hibak = 0
+                # REDIS RÉSZ
+                if result != elozoresult:
+                    await r.set(key, json.dumps(result, ensure_ascii=False))
+                    await r.incr("lastupdate")
+
+                    print('Van változás az adatokban:', key)
+
+                elozoresult = result
+
 
             except Exception as e:
-                egymasutani_hibak += 1
+                print(e)
+                print('Hibát dobott a kiolvasás, újra kezdem a fő ciklust!')
+                break # alciklus zárása vissza az előző ciklusba
 
-                if egymasutani_hibak < 5:
-                    print('Nem tudok az oldalra navigálni, kulcsot olvasni, vagy adatbázhoz csatlakozni!')
-                    continue # következő fő ciklus kezdés, vissza az elejére
-                else:
-                    print('Egymásután 5x nem tudtam az oldalra navigálni, kulcsot olvasni, vagy adatbázhoz csatlakozni, LEÁLL A WOEKER!')
-                    print(url)
-                    # logolni kéne
-                    break # kilépek a fő ciklusből leáll a worker
+            count += 1
 
-
-            # itt indul a valóban folyamatosan életbentartó ciklus
-            while True:
-                try:
-                    # ellenőrzöm, hogy az oldal be van-e még töltve (alkalmas-e a scrape-re)
-                    await page.wait_for_selector('[data-test="fullEventMarket"]', timeout=20000)
-
-                    # HTML kiolvasása, majd átadjuk a SZINKRON parsernek
-                    html = await page.content()
-                    result = parser_fn(html, df, kell)
-
-                    # print(key, result)
-                    print('Leolvasva:', key)
-
-                    # REDIS RÉSZ
-                    if result != elozoresult:
-                        await r.set(key, json.dumps(result, ensure_ascii=False))
-                        await r.incr("lastupdate")
-
-                        print('Van változás az adatokban:', key)
-
-                    elozoresult = result
-
-
-                except Exception as e:
-                    print(e)
-                    print('Hibát dobott a kiolvasás, újra kezdem a fő ciklust!')
-                    break # alciklus zárása vissza az előző ciklusba
-
-                count += 1
-
-                # kilépés vezérlő
-                if iterations is not None and count >= iterations:
-                    break
-
-                # várakozás
-                await asyncio.sleep(interval_sec)
-
-            # kilépek a külső ciklusból is
+            # kilépés vezérlő
             if iterations is not None and count >= iterations:
                 break
 
-        # ha kilépek a fő ciklusból akkor lefut
-        await context.close()
-        await browser.close()
+            # várakozás
+            await asyncio.sleep(interval_sec)
 
-        # leáll a worker (remélem)
+        # kilépek a külső ciklusból is
+        if iterations is not None and count >= iterations:
+            break
+
+    # page lezárása ha a worker kilép
+    try:
+        await page.close()
+    except Exception:
+        pass
+
+    # leáll a worker (remélem)
 
 
 
 async def main(URLS):
 
     df = pd.read_excel(r"C:\surebetting\shurebetting\Book1.xlsx")
-    kelllista = df[df['Unnamed: 0'] == 'ivibet'].values[0][1:].tolist()
+    market_map = build_market_map(df)
 
     r = redis.Redis(host='localhost', port=6379)
     print('Sikeres csatlakotás a Redis adatbázishoz!')
 
-    tasks = []
-
-    for i, url in enumerate(URLS):
-        # indítunk egy taskot
-        tasks.append(
-            asyncio.create_task(
-                run_scraper(url, df, headless=True, interval_sec=30, iterations=None, kell=kelllista, r=r)
-            )
+    # EGY közös böngésző és context az összes URL-hez (sok különálló Chromium helyett)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(
+            locale="hu-HU",
+            user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"),
         )
 
-        # KIS SZÜNET a következő előtt, hogy ne egyszerre nyíljon az összes
-        print(f'{i+1}. oldal indítása...')
-        await asyncio.sleep(5.0)  # próbáld 1.0-ával, aztán ha kell, 0.5 / 2.0 stb.
+        # Erőforrás blokkolás: képek/fontok/médiák nem töltődnek -> jelentős CPU/sávszél spórolás
+        await context.route("**/*", _route_handler)
 
-    await asyncio.gather(*tasks)
+        tasks = []
+
+        for i, url in enumerate(URLS):
+            page = await context.new_page()
+            # indítunk egy taskot
+            tasks.append(
+                asyncio.create_task(
+                    run_scraper(page, url, market_map, r, interval_sec=30, iterations=None)
+                )
+            )
+
+            # KIS SZÜNET a következő előtt, hogy ne egyszerre nyíljon az összes
+            print(f'{i+1}. oldal indítása...')
+            await asyncio.sleep(5.0)  # próbáld 1.0-ával, aztán ha kell, 0.5 / 2.0 stb.
+
+        await asyncio.gather(*tasks)
+        await context.close()
+        await browser.close()
+
     await r.aclose()
 
 
