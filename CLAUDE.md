@@ -105,11 +105,51 @@ Fogadóiroda weboldalak (TippMix, IViBet, Bet365)
 - Browser context: `locale="en-GB"`, `viewport=1920x1080`, `--disable-blink-features=AutomationControlled`
 - `interval_sec=60` (lassabb ciklus a rate-limit elkerülésére)
 
-### redis_figyelo.py - Figyelő
-- PubSub: `__keyspace@0__:lastupdate` figyelése
-- Minden változásnál: összes pár újraszámolása
-- `get_pos()` stdout kimenetét capture-öli és Telegram-on küldi
-- Telegram bot token és chat ID hardkódolva (biztonsági kockázat)
+### redis_figyelo.py - Figyelő (részletes elemzés)
+
+**Mit csinál pontról pontra (a jelenlegi kód alapján):**
+
+1. **Sor 1-4** — Importálja a `redis` klienst, `json`-t (Redis értékek deszerializálásához), `io.StringIO`-t és `redirect_stdout`-ot a `get_pos()` print-es kimenetének elfogásához.
+2. **Sor 6** — Importálja a `get_pos`-t és `get_parok`-ot a [rendezo.py](python/rendezo.py)-ból.
+3. **Sor 8** — Csatlakozik a Redis-hez: `host="localhost", port=6379`. **`decode_responses` nincs beállítva** → minden visszakapott érték `bytes` típusú lesz.
+4. **Sor 10-11** — Pubsub objektum, és pattern-subscribe a `__keyspace@0__:lastupdate` csatornára. Ez a Redis **keyspace notification** csatornája — csak akkor kap üzenetet, ha a Redis konfigurációban a `notify-keyspace-events` engedélyezve van (legalább `K$` flag-ekkel).
+5. **Sor 13** — Kiír egy "Listening for changes..." üzenetet.
+6. **Sor 15** — Blokkoló végtelen ciklus a pubsub üzenetekre (`pubsub.listen()`).
+7. **Sor 16-17** — Kiszűri a nem-`pmessage` típusú üzeneteket (pl. a subscribe nyugtázását).
+8. **Sor 19** — `r.keys()`-szel **lekéri az ÖSSZES kulcsot** a Redis-ből, majd kézzel UTF-8-ra dekódolja a bytes-okat.
+9. **Sor 20** — Meghívja `get_parok(kulcsok)`-ot, ami meccs ID alapján csoportosítja a kulcsokat, és visszaadja azokat amelyekben legalább 2 iroda kulcsa van.
+10. **Sor 22** — Csak az **pontosan 2 elemű párokat** szűri ki (`parositott` lista) — ez csak a kiíráshoz kell.
+11. **Sor 24-29** — Kiírja, hogy hány meccset sikerült párosítani, majd felsorolja őket (csak az első 4 kötőjeles részt: `hazai-vendeg-datum`).
+12. **Sor 31** — Üres `out_parts` lista a kimenet darabjainak.
+13. **Sor 33-49** — Végigmegy az összes páron (`pairs`):
+    - **Sor 34-35**: Ha egy meccshez **2-nél több** iroda kulcsa van, kihagyja (`continue`).
+    - **Sor 37**: `r.mget(idk)`-vel egyszerre lekéri a két iroda JSON-ját.
+    - **Sor 38**: Ha bármelyik érték `None` (közben kitörölték a kulcsot), kihagyja.
+    - **Sor 41**: JSON-okat dict-té parse-olja.
+    - **Sor 43-45**: `redirect_stdout`-tal elfogja a `get_pos(*adatok2)` által kiírt szöveget egy `StringIO` bufferbe.
+    - **Sor 47-49**: Ha a buffer nem üres, hozzáfűzi az `out_parts`-hoz.
+14. **Sor 51-52** — Ha van bármilyen kimenet, kettős sortöréssel összefűzve kiírja az összes párra vonatkozó arbitrázs eredményt.
+
+---
+
+**Javított hibák / a jelenlegi viselkedés:**
+
+1. **Keyspace notifications automatikus engedélyezése** — `connect()` függvény induláskor `CONFIG SET notify-keyspace-events K$` paranccsal beállítja, ha még nincs.
+2. **`decode_responses=True` beállítva** — a Redis kliens már stringeket ad vissza, nincs szükség kézi UTF-8 dekódolásra.
+3. **`r.keys()` helyett `r.scan_iter(match="*-*-*-*")`** — a `osszes_kulcs()` függvény nem blokkolja a Redis-t.
+4. **3+ iroda eset kezelve** — `itertools.combinations(csoport, 2)`-vel minden 2-es párra lefut a `get_pos()`. Ha mindhárom iroda írt egy meccsre, 3 db pár kerül kiértékelésre.
+5. **JSON parse hibakezelés** — `try/except (json.JSONDecodeError, TypeError)`, hibás JSON esetén csak az adott pár átugorva.
+6. **Reconnect logika** — `figyelo_loop()` külső `while True` ciklus elkapja a `redis.exceptions.ConnectionError`-t és `RedisError`-t, `RECONNECT_BACKOFF_SEC` (2s) várakozás után újracsatlakozik.
+7. **Debounce** — `DEBOUNCE_SEC = 0.5`: ha 0.5 másodpercen belül több `lastupdate` event jön, csak az első indít újraszámolást. Megakadályozza a buffer feltöltődését több scraper egyidejű írásánál.
+8. **`get_pos()` exception sandbox** — egyetlen meccs feldolgozási hibája nem viszi le a fő ciklust.
+9. **Meccs név a kimenetben** — minden arbitrázs blokk fejléccel jelenik meg: `=== hazai-vendeg-datum | iroda1 vs iroda2 ===`.
+10. **`get_parok()` aktualizált docstring** — már 2+ elemű csoportokat ad vissza (nem csak párokat).
+
+**Még megoldatlan (továbbra is hibás):**
+
+- **(11)** Telegram értesítés továbbra sincs implementálva (a kérés szerint nem javítva). A kimenet stdout-ra megy.
+- **Inkonzisztens host konfig a projektben** — `redis_figyelo.py` és `tippmix_scrape_multiple.py`: `localhost:6379`. [rediss.py](python/rediss.py): `192.168.0.74:8001`. Központosított config érdemes lenne.
+- **Minden `lastupdate`-re minden pár újraszámolódik** — a pubsub csatorna csak a `lastupdate` kulcsot figyeli, nem tudjuk melyik meccs változott. Megoldható lenne `__keyspace@0__:*` figyeléssel, de jelentős átalakítást igényel.
 
 ## Redis kulcs formátum
 ```

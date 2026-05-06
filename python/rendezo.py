@@ -6,21 +6,21 @@ from matek import calc_arb, van_arb
 
 def get_parok(kulcsok):
     '''
-    A lekérdzett kulcsokat r.keys() párokba rendezi ID alapján és szűri a lastupdate kulcsot
-    Vissza adja a párokat egy listában [(id1, id2), (id3, id4) ... ]
+    A lekérdezett kulcsokat meccs ID alapján csoportosítja és szűri a lastupdate kulcsot.
+    Vissza adja azokat a csoportokat, amelyekben legalább 2 iroda kulcsa van.
+    Egy csoport 2, 3 vagy több elemű is lehet (pl. mindhárom iroda írt ugyanarra a meccsre).
+    Visszatérési érték: list[tuple[str, ...]]
     '''
     groups = defaultdict(list)
-    
+
     for k in kulcsok:
         if k == "lastupdate":
             continue
-    
+
         prefix = "-".join(k.split("-")[:4])
         groups[prefix].append(k)
-    
-    pairs = [tuple(v) for v in groups.values() if len(v) > 1]
 
-    return pairs
+    return [tuple(v) for v in groups.values() if len(v) > 1]
 
 
 
@@ -58,29 +58,29 @@ def cut_elotag(lista: list):
 
 # KIDOLGOZÁS ALATT...
 
-def get_pos(iroda_1_data: dict, iroda_2_data: dict, toke=100_000, ksz=-2):
+def get_pos(iroda_1_data: dict, iroda_2_data: dict, toke=100_000, ksz=-2,
+            iroda1_nev='Iroda 1', iroda2_nev='Iroda 2'):
     kozoskulcsok = list(set(iroda_1_data.keys()) & set(iroda_2_data.keys()))
 
     for kulcs in kozoskulcsok:
-        #print(kulcs)
-        #print('\t', iroda_1_data[kulcs], iroda_2_data[kulcs], '\n')
 
-        if kulcs == 'azsiai_hendikep':
+        # hendikep és ázsiai hendikep: ellentétes kimenetek párosítása (1_-X ↔ 2_+X)
+        if kulcs in ('azsiai_hendikep', 'hendikep'):
 
-            parok = parositas(iroda_1_data['azsiai_hendikep'], iroda_2_data['azsiai_hendikep'])
-            #print(parok)
+            parok = parositas(iroda_1_data[kulcs], iroda_2_data[kulcs])
             for p in parok:
                 if van_arb(p[2], p[3]):
                     print(kulcs)
-                    print(p[0], p[1]) # cimek
-                    print(p[2], p[3]) # oddsok
-                    calc_arb(p[2], p[3], toke, ksz=ksz)
+                    print(f'{iroda1_nev}: {p[0]}   {iroda2_nev}: {p[1]}')
+                    print(f'{iroda1_nev}: {p[2]}   {iroda2_nev}: {p[3]}')
+                    calc_arb(p[2], p[3], toke, ksz=ksz,
+                             iroda1_nev=iroda1_nev, iroda2_nev=iroda2_nev)
 
         # 3-as odds-ok
         elif kulcs in ['vegkimenetel']:
             pass
 
-        # minden más (bináris piacok: igen/nem, alatt/felett, stb.)
+        # bináris piacok: igen/nem, alatt/felett, paros/paratlan, stb.
         else:
             a = iroda_1_data[kulcs]
             b = iroda_2_data[kulcs]
@@ -88,18 +88,16 @@ def get_pos(iroda_1_data: dict, iroda_2_data: dict, toke=100_000, ksz=-2):
             if len(a) < 2 or len(b) < 2:
                 continue
 
-            # név alapú párosítás: a közös kulcsokat keresztezzük
-            a_keys = list(a.keys())
-            b_keys = list(b.keys())
-
-            for ka in a_keys:
-                for kb in b_keys:
+            # csak ELLENTÉTES kimeneteket nézünk: a-ból ka, b-ből a TÖBBI (≠ ka) kulcs
+            for ka in a.keys():
+                for kb in b.keys():
                     if ka == kb:
                         continue
                     if van_arb(a[ka], b[kb]):
                         print(kulcs)
-                        print(ka, kb)
-                        print(a[ka], b[kb])
-                        calc_arb(a[ka], b[kb], toke, ksz=ksz)
+                        print(f'{iroda1_nev}: {ka}   {iroda2_nev}: {kb}')
+                        print(f'{iroda1_nev}: {a[ka]}   {iroda2_nev}: {b[kb]}')
+                        calc_arb(a[ka], b[kb], toke, ksz=ksz,
+                                 iroda1_nev=iroda1_nev, iroda2_nev=iroda2_nev)
 
 

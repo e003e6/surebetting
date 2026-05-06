@@ -14,7 +14,7 @@ def ep_tet_megoszlas(oddsA, oddsB):
     return ta, tb, min(ny1, ny2)
 
 
-def calc_arb(oddsA, oddsB, toke, ksz=-3):
+def calc_arb(oddsA, oddsB, toke, ksz=-3, iroda1_nev='Iroda 1', iroda2_nev='Iroda 2'):
 
     # ellenőrizzük, hogy van-e arb opció
     if not van_arb(oddsA, oddsB):
@@ -28,19 +28,19 @@ def calc_arb(oddsA, oddsB, toke, ksz=-3):
     # -3 = ezres szint, -4 tízezres szint
     fo_a = round(ta * toke, ksz)  # fogadás összege iroda A-nál
     fo_b = round(tb * toke, ksz)
-    
-    print('Iroda 1 tét:', '\t pontos:', int(ta * toke), '\t kerekített:', int(fo_a))
-    print('Iroda 2 tét:', '\t pontos:', int(tb * toke), '\t kerekített:', int(fo_b))
+
+    print(f'{iroda1_nev} tét:\t pontos: {int(ta * toke)}\t kerekített: {int(fo_a)}')
+    print(f'{iroda2_nev} tét:\t pontos: {int(tb * toke)}\t kerekített: {int(fo_b)}')
 
     print()
     print('Matematikai biztos nyereség:', int(toke * profit))
-    
+
     # nyereség kiszámítása kerekített öszegekkel
     t_v = fo_a + fo_b # a fogadásra költött összeg (a két fogadás árának összege)
     p_a, p_b = (fo_a*oddsA)-t_v, (fo_b*oddsB)-t_v
     b_ny = round(min(p_a, p_b))
-    
+
     print('Biztos nyereség kerekített összeggel:', b_ny)
-    print('Nereség A:', round(p_a), '\t nyereség B:', round(p_b))
+    print(f'Nyereség {iroda1_nev}: {round(p_a)}\t nyereség {iroda2_nev}: {round(p_b)}')
 
 
