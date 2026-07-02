@@ -12,8 +12,9 @@ python/                         # <-- AKTÍV produkciós kód
 ├── seged.py                    # Segédfüggvények (normalizálás, szöveg)
 ├── tippmix_scrape_multiple.py  # TippMix scraper (async, loop-ban fut)
 ├── ivibet_scrape_multiple.py   # IViBet scraper (async, loop-ban fut)
-├── tippmix_osszesmeccs_scrape.py # TippMix összes meccs link gyűjtő
-├── ivibet_osszesmeccs_scrape.py  # IViBet összes meccs link gyűjtő
+├── tippmix_osszesmeccs_scrape.py # TippMix összes meccs link gyűjtő (teljes foci kínálat, dátumszűrt)
+├── ivibet_osszesmeccs_scrape.py  # IViBet összes meccs link gyűjtő (dátumszűrt)
+├── datum_szuro.py              # Közös dátumablak szűrő a link gyűjtőkhöz (NAPOK_ELORE)
 ├── bet365_scrape_multiple.py   # Bet365 scraper (async, loop-ban fut, stealth)
 ├── redis_figyelo.py            # Redis figyelő + Telegram értesítő
 ├── rediss.py                   # Redis teszt utility
@@ -68,7 +69,7 @@ Fogadóiroda weboldalak (TippMix, IViBet, Bet365)
 ### rendezo.py - Párosítás
 - `get_parok(kulcsok)` → list[tuple]: Redis kulcsokat meccs ID alapján párokba rendezi (első 4 kötőjeles rész = meccs ID)
 - `parositas(d1, d2)` → list: Ázsiai hendikep párosítás (pl. 1_-0.25 ↔ 2_+0.25)
-- `get_pos(iroda_1_data, iroda_2_data, toke, ksz)` → print: Megkeresi az összes arbitrázs lehetőséget két iroda adatai között. Kezeli: ázsiai hendikep, bináris piacok. A `vegkimenetel` (3-way) még nincs implementálva.
+- `get_pos(iroda_1_data, iroda_2_data, toke=100_000, ksz=-2, iroda1_nev='Iroda 1', iroda2_nev='Iroda 2')` → print: Megkeresi az összes arbitrázs lehetőséget két iroda adatai között. Kezeli: ázsiai hendikep, bináris piacok. A `vegkimenetel` (3-way) még nincs implementálva. Az `iroda1_nev`/`iroda2_nev` a kimenetben jelenik meg.
 
 ### seged.py - Normalizálás
 - `normalize_team_id(name)` → str: Csapatnévből egységes ID-t csinál. Logika: (1) TEAM_ALIASES ellenőrzés (Manchester City→mancity, West Ham→westham, stb.), (2) ékezet eltávolítás + GENERIC_TOKENS szűrése (FC, SC, United, City, Forest, Hotspur, Wanderers, Foot, stb.), (3) ELSŐ megmaradt token = város név. Új iroda hozzáadásakor ha a párosítás nem működik, TEAM_ALIASES-ba kell felvenni az eltérő neveket.
@@ -81,7 +82,9 @@ Fogadóiroda weboldalak (TippMix, IViBet, Bet365)
 - `get_key(soup)` → str: Meccs azonosító a HTML-ből (hazai-vendeg-datum-tippmix)
 - `parse_html(html, df, kell)` → (key, data): HTML → strukturált odds dict
 - `egysegesito_tippmix(m, df)` → dict: Tippmix piacneveket standard nevekre mapeli (Book1.xlsx alapján)
-- `run_scraper()`: Dupla while loop - külső: oldal betöltés retry (max 5 hiba), belső: folyamatos monitoring
+- **Page-pool rotáció**: `POOL_SIZE` (alap: 5) worker körkörösen járja az URL-eket, mindegyik worker EGY page-en dolgozik → egyszerre csak `POOL_SIZE` darab Playwright page van nyitva, függetlenül a meccsszámtól (a régi "URL-enként egy page" miatt crashelt nagy meccsszámnál).
+- `scrape_once(page, url, ...)`: egyszeri navigáció + parse + Redis diff-check.
+- `worker(...)`: a megosztott `asyncio.Queue`-ból veszi az URL-eket, scrape, majd visszateszi a sor végére. `URL_INTERVAL_SEC` (alap: 30s) tartja a per-URL rate limitet (kicsi URL-számnál, ha gyorsabban körbeérnénk).
 - CSS selectorok: `.MarketGroupsItem`, `.Market__CollapseText`, `.Market__OddsGroups`
 
 ### ivibet_scrape_multiple.py - IViBet scraper
@@ -90,6 +93,7 @@ Fogadóiroda weboldalak (TippMix, IViBet, Bet365)
 - `get_key_from_page(page)` → str: Async - JS-ből olvassa a csapatneveket
 - `parse_html(html, df, kelllista)` → dict: Odds kinyerés
 - `egysegesito_ivibet(data, df, kelllista)` → dict: IViBet piacneveket standard nevekre mapeli
+- **Page-pool rotáció**: ugyanaz a minta, mint a TippMix-nél (`POOL_SIZE` worker, közös `asyncio.Queue`, `URL_INTERVAL_SEC` rate limit). A `scrape_once` itt `goto_ivibet`-et használ navigációhoz.
 - data-test attribútumok: `fullEventMarket`, `additionalOdd`, `teamName`, `eventDate`
 - Browser context: locale=hu-HU, custom User-Agent
 
@@ -105,49 +109,55 @@ Fogadóiroda weboldalak (TippMix, IViBet, Bet365)
 - Browser context: `locale="en-GB"`, `viewport=1920x1080`, `--disable-blink-features=AutomationControlled`
 - `interval_sec=60` (lassabb ciklus a rate-limit elkerülésére)
 
+### Link gyűjtők (*_osszesmeccs_scrape.py) + datum_szuro.py
+
+A két iroda link gyűjtője korábban **eltérő hatókörű** halmazt adott (a TippMix a `/hu/` főoldalt scrapelte → csak pár tucat kiemelt esemény; az IViBet a teljes prematch foci kínálatot → sok esemény hetekre előre), ezért alig volt átfedés. Mostani működés:
+
+- **`datum_szuro.py`** — Közös időablak. `NAPOK_ELORE` (alap: 2) adja meg, hány napra előre gyűjtsünk a mai naptól (0 = csak ma). `engedelyezett_napok()` a `date` halmazt, `md_to_date()` az év nélküli TippMix `MM.DD`-t alakítja `date`-té (év-forduló kezelve), `benne_van()` szűr (ismeretlen/parse-hibás dátumot megtart, hogy ne dobjon el meccset). A két scraper ugyanezt az ablakot használja → összeigazodó halmazok és kezelhető meccsszám a downstream odds-scrapereknek.
+
+- **`tippmix_osszesmeccs_scrape.py`** — A `helyszin` (ország szerinti) nézetből (`/hu/fogadas/labdarugas/1/osszes/0/helyszin`) kigyűjti az összes ország "összes esemény" linkjét (`/hu/bajnoksag-lokacio/labdarugas/1/{orszag}/{id}/osszes/0`), majd országonként végiggörgetve begyűjti az esemény-ankorokat (`a.Anchor.EventItem__Indicator`) és a sorukban lévő dátumot (`.MatchTime__InfoPart--Date`, `MM.DD`). Dátumra szűr, `https://sports2.tippmixpro.hu/{path}/all` formátumban ad vissza. Opcionális `targets` lista a path szerinti szűréshez.
+
+- **`ivibet_osszesmeccs_scrape.py`** — A `https://ivi-bettx.net/hu/prematch/football` oldalt görgeti (scrollable konténerek + ablak, stagnálásig). Most minden `a[data-test="eventLink"]`-hez a sorában lévő dátumot (`[data-test="eventDate"]`, `DD.MM.YYYY`) is kinyeri, és a végén dátumra szűr. A href→dátum párokat dict-ben gyűjti.
+
+> **Megjegyzés:** a `datum_szuro` csak a *link gyűjtésnél* szűr; a meccsek tényleges párosítása továbbra is a `normalize_team_id` + Redis kulcs alapján történik. A `NAPOK_ELORE` növelésével több meccs kerül az unióba (több arbitrázs esély, de több figyelendő meccs is).
+
 ### redis_figyelo.py - Figyelő (részletes elemzés)
 
-**Mit csinál pontról pontra (a jelenlegi kód alapján):**
+A kód négy függvényre van szervezve: `connect()`, `osszes_kulcs()`, `feldolgoz()` és `figyelo_loop()` (belépési pont a `__main__`-ből).
 
-1. **Sor 1-4** — Importálja a `redis` klienst, `json`-t (Redis értékek deszerializálásához), `io.StringIO`-t és `redirect_stdout`-ot a `get_pos()` print-es kimenetének elfogásához.
-2. **Sor 6** — Importálja a `get_pos`-t és `get_parok`-ot a [rendezo.py](python/rendezo.py)-ból.
-3. **Sor 8** — Csatlakozik a Redis-hez: `host="localhost", port=6379`. **`decode_responses` nincs beállítva** → minden visszakapott érték `bytes` típusú lesz.
-4. **Sor 10-11** — Pubsub objektum, és pattern-subscribe a `__keyspace@0__:lastupdate` csatornára. Ez a Redis **keyspace notification** csatornája — csak akkor kap üzenetet, ha a Redis konfigurációban a `notify-keyspace-events` engedélyezve van (legalább `K$` flag-ekkel).
-5. **Sor 13** — Kiír egy "Listening for changes..." üzenetet.
-6. **Sor 15** — Blokkoló végtelen ciklus a pubsub üzenetekre (`pubsub.listen()`).
-7. **Sor 16-17** — Kiszűri a nem-`pmessage` típusú üzeneteket (pl. a subscribe nyugtázását).
-8. **Sor 19** — `r.keys()`-szel **lekéri az ÖSSZES kulcsot** a Redis-ből, majd kézzel UTF-8-ra dekódolja a bytes-okat.
-9. **Sor 20** — Meghívja `get_parok(kulcsok)`-ot, ami meccs ID alapján csoportosítja a kulcsokat, és visszaadja azokat amelyekben legalább 2 iroda kulcsa van.
-10. **Sor 22** — Csak az **pontosan 2 elemű párokat** szűri ki (`parositott` lista) — ez csak a kiíráshoz kell.
-11. **Sor 24-29** — Kiírja, hogy hány meccset sikerült párosítani, majd felsorolja őket (csak az első 4 kötőjeles részt: `hazai-vendeg-datum`).
-12. **Sor 31** — Üres `out_parts` lista a kimenet darabjainak.
-13. **Sor 33-49** — Végigmegy az összes páron (`pairs`):
-    - **Sor 34-35**: Ha egy meccshez **2-nél több** iroda kulcsa van, kihagyja (`continue`).
-    - **Sor 37**: `r.mget(idk)`-vel egyszerre lekéri a két iroda JSON-ját.
-    - **Sor 38**: Ha bármelyik érték `None` (közben kitörölték a kulcsot), kihagyja.
-    - **Sor 41**: JSON-okat dict-té parse-olja.
-    - **Sor 43-45**: `redirect_stdout`-tal elfogja a `get_pos(*adatok2)` által kiírt szöveget egy `StringIO` bufferbe.
-    - **Sor 47-49**: Ha a buffer nem üres, hozzáfűzi az `out_parts`-hoz.
-14. **Sor 51-52** — Ha van bármilyen kimenet, kettős sortöréssel összefűzve kiírja az összes párra vonatkozó arbitrázs eredményt.
+**Konstansok (modul tetején):**
+- `REDIS_HOST = "localhost"`, `REDIS_PORT = 6379`
+- `KEY_PATTERN = "*-*-*-*"` — a meccs kulcsok SCAN szűrője
+- `DEBOUNCE_SEC = 0.5` — sűrű `lastupdate` eventek összevonása
+- `RECONNECT_BACKOFF_SEC = 2` — várakozás újracsatlakozás előtt
+- `PERIODIC_RESCAN_SEC = 30` — ennyi időnként akkor is újraszkennel, ha nem jön pubsub esemény
 
----
+**`connect()`** — Létrehozza a Redis klienst `decode_responses=True`-szal (a visszakapott értékek stringek, nincs kézi UTF-8 dekódolás). Lekérdezi a `notify-keyspace-events` configot, és ha nincs benne `K` + (`$` vagy `A`) flag, beállítja `K$`-re (a keyspace notification a SET/INCR eseményekhez kell). Ha a `CONFIG SET` `ResponseError`-t dob (pl. managed Redis), figyelmeztetést ír ki, de nem áll le.
 
-**Javított hibák / a jelenlegi viselkedés:**
+**`osszes_kulcs(r)`** — `r.scan_iter(match=KEY_PATTERN, count=500)`-zal végigmegy a meccs kulcsokon (nem blokkoló `r.keys()` helyett).
 
-1. **Keyspace notifications automatikus engedélyezése** — `connect()` függvény induláskor `CONFIG SET notify-keyspace-events K$` paranccsal beállítja, ha még nincs.
-2. **`decode_responses=True` beállítva** — a Redis kliens már stringeket ad vissza, nincs szükség kézi UTF-8 dekódolásra.
-3. **`r.keys()` helyett `r.scan_iter(match="*-*-*-*")`** — a `osszes_kulcs()` függvény nem blokkolja a Redis-t.
-4. **3+ iroda eset kezelve** — `itertools.combinations(csoport, 2)`-vel minden 2-es párra lefut a `get_pos()`. Ha mindhárom iroda írt egy meccsre, 3 db pár kerül kiértékelésre.
-5. **JSON parse hibakezelés** — `try/except (json.JSONDecodeError, TypeError)`, hibás JSON esetén csak az adott pár átugorva.
-6. **Reconnect logika** — `figyelo_loop()` külső `while True` ciklus elkapja a `redis.exceptions.ConnectionError`-t és `RedisError`-t, `RECONNECT_BACKOFF_SEC` (2s) várakozás után újracsatlakozik.
-7. **Debounce** — `DEBOUNCE_SEC = 0.5`: ha 0.5 másodpercen belül több `lastupdate` event jön, csak az első indít újraszámolást. Megakadályozza a buffer feltöltődését több scraper egyidejű írásánál.
-8. **`get_pos()` exception sandbox** — egyetlen meccs feldolgozási hibája nem viszi le a fő ciklust.
-9. **Meccs név a kimenetben** — minden arbitrázs blokk fejléccel jelenik meg: `=== hazai-vendeg-datum | iroda1 vs iroda2 ===`.
-10. **`get_parok()` aktualizált docstring** — már 2+ elemű csoportokat ad vissza (nem csak párokat).
+**`feldolgoz(r)`** — Egy teljes körös arbitrázs-számítás:
+1. `osszes_kulcs(r)` → `get_parok(kulcsok)`: meccs ID szerint csoportosít.
+2. A 2+ elemű csoportokat tartja meg (`parositott_csoportok`), kiírja a számukat és felsorolja őket (`hazai-vendeg-datum-iroda` első 4 része). Ha nincs egy sem, ezt jelzi.
+3. Minden csoportra végigveszi az **összes 2-es párt** (`itertools.combinations(csoport, 2)`) — így 3+ iroda esetén is minden iroda-pár kiértékelődik.
+4. Páronként: `r.mget([k1, k2])` (Redis-hibára átugrik), `None` érték esetén skip, JSON parse (`JSONDecodeError`/`TypeError` esetén skip).
+5. Az iroda nevét a kulcs utolsó kötőjeles részéből veszi (`k1.split("-")[-1]`).
+6. `redirect_stdout`-tal egy `StringIO` bufferbe fogja a `get_pos(d1, d2, iroda1_nev=..., iroda2_nev=...)` kimenetét; a `get_pos` bármilyen kivételét elkapja és átugorja (egy meccs hibája nem áll le a ciklust).
+7. Ha a buffer nem üres, fejléccel (`=== hazai-vendeg-datum | iroda1 vs iroda2 ===`) hozzáfűzi az `out_parts`-hoz.
+8. A végén kettős sortöréssel összefűzve kiírja az összes találatot.
 
-**Még megoldatlan (továbbra is hibás):**
+**`figyelo_loop()`** — Külső `while True` reconnect-ciklus:
+1. `connect()`, majd pubsub `psubscribe("__keyspace@0__:lastupdate")`, "Listening for changes..." üzenet.
+2. **Induló szkennelés**: egyszer lefuttatja a `feldolgoz(r)`-t, hogy a figyelő indítása előtt már Redis-ben lévő (vagy manuálisan beszúrt) adatok is feldolgozódjanak.
+3. Belső ciklus: `pubsub.get_message(timeout=PERIODIC_RESCAN_SEC)` — időkorláttal vár.
+   - `pmessage` típusú üzenetnél trigger, **ha** az utolsó feldolgozás óta eltelt legalább `DEBOUNCE_SEC` (debounce a párhuzamos scraper-írásokra).
+   - Ha nem jött esemény, de eltelt `PERIODIC_RESCAN_SEC` → fallback újraszkennelés.
+   - Trigger esetén `feldolgoz(r)`; egy meccs feldolgozási hibája nem viszi le a ciklust.
+4. `ConnectionError`/`RedisError` esetén `RECONNECT_BACKOFF_SEC` várakozás után a külső ciklus újracsatlakozik.
 
-- **(11)** Telegram értesítés továbbra sincs implementálva (a kérés szerint nem javítva). A kimenet stdout-ra megy.
+**Még megoldatlan / ismert korlátok:**
+
+- **Telegram értesítés nincs implementálva** — a kimenet stdout-ra megy (a `requirements.txt`-ben szereplő `requests` egyelőre nincs felhasználva itt).
 - **Inkonzisztens host konfig a projektben** — `redis_figyelo.py` és `tippmix_scrape_multiple.py`: `localhost:6379`. [rediss.py](python/rediss.py): `192.168.0.74:8001`. Központosított config érdemes lenne.
 - **Minden `lastupdate`-re minden pár újraszámolódik** — a pubsub csatorna csak a `lastupdate` kulcsot figyeli, nem tudjuk melyik meccs változott. Megoldható lenne `__keyspace@0__:*` figyeléssel, de jelentős átalakítást igényel.
 
@@ -188,17 +198,16 @@ A piac nevek a Book1.xlsx-ben definiált standard nevekre vannak mapelve.
 - A `jupiter/` mappát figyelmen kívül kell hagyni
 - Új fogadóiroda hozzáadásakor szükséges:
   1. `{iroda}_osszesmeccs_scrape.py` - Link gyűjtő
-  2. `{iroda}_scrape_multiple.py` - Odds scraper (async, `run_scraper()` mintával)
+  2. `{iroda}_scrape_multiple.py` - Odds scraper (async, page-pool rotáció mintával: `scrape_once` + `worker` közös queue-val)
   3. Book1.xlsx-ben új sheet az iroda piac név mapping-jéhez
   4. `egysegesito_{iroda}()` függvény a standard formátumra alakításhoz
 - A scraper-ek közös mintát követnek: dupla while loop, Playwright async, diff-check Redis-be írás, `lastupdate` counter növelése változáskor
-- A `run_scraper()` függvény mindkét scraper-ben majdnem azonos struktúrájú - közös kiemelése lehetséges refaktor
+- A `scrape_once` + `worker` pool minta mindkét scraper-ben majdnem azonos struktúrájú - közös kiemelése lehetséges refaktor
 
 ## Ismert hiányosságok
 - `vegkimenetel` (3-way/1X2) arbitrázs számítás nincs implementálva a `get_pos()`-ban (`pass`)
-- Telegram bot credentials hardkódolva a `redis_figyelo.py`-ban
+- Telegram értesítés nincs implementálva a `redis_figyelo.py`-ban (a kimenet stdout-ra megy)
 - Az Excel fájl útvonala hardkódolva (`C:\surebetting\shurebetting\Book1.xlsx`)
-- A `redis_figyelo.py` nem tartalmazza a meccs nevét az üzenetben (csak odds adatokat)
 - Hiányzik a logging (print-alapú debug)
 
 

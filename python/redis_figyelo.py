@@ -23,10 +23,9 @@ def connect():
         current = r.config_get("notify-keyspace-events").get("notify-keyspace-events", "")
         if "K" not in current or ("$" not in current and "A" not in current):
             r.config_set("notify-keyspace-events", "K$")
-            print("Keyspace notifications bekapcsolva: K$")
-    except redis.exceptions.ResponseError as e:
-        print(f"Figyelem: notify-keyspace-events nem állítható ({e}). "
-              f"Kézzel állítsd be: CONFIG SET notify-keyspace-events K$")
+    except redis.exceptions.ResponseError:
+        # Csendben tovább: a felhasználó csak ARB találatot akar látni
+        pass
     return r
 
 
@@ -40,12 +39,6 @@ def feldolgoz(r):
     csoportok = get_parok(kulcsok)
 
     parositott_csoportok = [c for c in csoportok if len(c) >= 2]
-    if parositott_csoportok:
-        print(f"Sikeresen párosított meccsek ({len(parositott_csoportok)} db):")
-        for c in parositott_csoportok:
-            print(f"  - {'-'.join(c[0].split('-')[:4])}")
-    else:
-        print("Nem sikerült egyetlen meccset sem párosítani.")
 
     out_parts = []
 
@@ -54,8 +47,8 @@ def feldolgoz(r):
         for k1, k2 in combinations(csoport, 2):
             try:
                 adatok = r.mget([k1, k2])
-            except redis.exceptions.RedisError as e:
-                print(f"Redis mget hiba ({k1}, {k2}): {e}")
+            except redis.exceptions.RedisError:
+                # Csendben tovább: csak ARB találatot írunk ki
                 continue
 
             if any(a is None for a in adatok):
@@ -63,8 +56,7 @@ def feldolgoz(r):
 
             try:
                 d1, d2 = (json.loads(a) for a in adatok)
-            except (json.JSONDecodeError, TypeError) as e:
-                print(f"JSON parse hiba ({k1} vagy {k2}): {e}")
+            except (json.JSONDecodeError, TypeError):
                 continue
 
             iroda1 = k1.split("-")[-1]
@@ -74,8 +66,7 @@ def feldolgoz(r):
             try:
                 with redirect_stdout(buf):
                     get_pos(d1, d2, iroda1_nev=iroda1, iroda2_nev=iroda2)
-            except Exception as e:
-                print(f"get_pos hiba ({k1} vs {k2}): {e}")
+            except Exception:
                 continue
 
             s = buf.getvalue().strip()
@@ -95,16 +86,15 @@ def figyelo_loop():
             pubsub = r.pubsub()
             pubsub.psubscribe("__keyspace@0__:lastupdate")
 
-            print("Listening for changes...")
-
             # Induló szkennelés: a már Redis-ben lévő adatokat is feldolgozzuk
             # (manuálisan beszúrt kulcsok, vagy a figyelő indítása előtti állapot)
             try:
                 feldolgoz(r)
             except redis.exceptions.RedisError:
                 raise
-            except Exception as e:
-                print(f"Indító feldolgozás hiba (továbblépünk): {e}")
+            except Exception:
+                # Csendben tovább: csak ARB találatot írunk ki
+                pass
 
             utolso_feldolgozas = time.monotonic()
 
@@ -131,15 +121,13 @@ def figyelo_loop():
                     feldolgoz(r)
                 except redis.exceptions.RedisError:
                     raise
-                except Exception as e:
+                except Exception:
                     # Egyetlen meccs feldolgozási hibája ne vigye le a fő ciklust
-                    print(f"Feldolgozási hiba (továbblépünk): {e}")
+                    pass
 
-        except redis.exceptions.ConnectionError as e:
-            print(f"Redis kapcsolat megszakadt: {e}. Újracsatlakozás {RECONNECT_BACKOFF_SEC}s múlva...")
+        except redis.exceptions.ConnectionError:
             time.sleep(RECONNECT_BACKOFF_SEC)
-        except redis.exceptions.RedisError as e:
-            print(f"Redis hiba: {e}. Újracsatlakozás {RECONNECT_BACKOFF_SEC}s múlva...")
+        except redis.exceptions.RedisError:
             time.sleep(RECONNECT_BACKOFF_SEC)
 
 
